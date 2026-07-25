@@ -530,7 +530,7 @@ schedule:
   job: full                  # full | fetch | quality
   run_on_start: false        # 启动立刻跑一轮（调试可 true）
   skip_ai: true              # 定时全流程跳过 AI，更快
-  max_test: 1200
+  max_test: 6000
   rounds: 2
   jitter_sec: 45
 
