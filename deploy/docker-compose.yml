@@ -1,0 +1,46 @@
+services:
+  node-hunter:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: node-hunter
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # 开启定时（也可在 config.yaml schedule.enabled）
+      NODE_HUNTER_SCHEDULE: "1"
+      # 订阅访问令牌（强烈建议修改）
+      NODE_HUNTER_TOKEN: "${NODE_HUNTER_TOKEN:-change-me-please}"
+      # 对外域名，用于 /sub 返回的完整链接
+      NODE_HUNTER_PUBLIC_URL: "${NODE_HUNTER_PUBLIC_URL:-http://127.0.0.1:8080}"
+      # 可选：AI 真实代理探测
+      # NODE_HUNTER_SOCKS5: "127.0.0.1:1080"
+      TZ: Asia/Shanghai
+    volumes:
+      - nh-data:/app/data
+      - nh-output:/app/output
+      - ../configs/config.yaml:/app/configs/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  # 可选：Caddy 自动 HTTPS 反代
+  # caddy:
+  #   image: caddy:2-alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy-data:/data
+  #   depends_on:
+  #     - node-hunter
+
+volumes:
+  nh-data:
+  nh-output:
+  # caddy-data:

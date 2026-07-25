@@ -1,0 +1,599 @@
+# node-hunter 配置文件
+# 采集 / 解析 / 测试 / 清理 / 筛选 代理节点
+# 订阅源已按 2026-07 实测可用性扩充；失效源请 enabled: false 或替换 URL
+# 维护：configs/sources_catalog.md
+
+app:
+  concurrency: 64
+  fetch_timeout_sec: 25
+  test_timeout_sec: 6
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
+# type: subscription | raw | clash
+# 说明：
+#   - 大体积聚合源（>1MB）默认开启，可按带宽关闭
+#   - 同内容镜像尽量少开；去重由 cleaner 处理
+sources:
+
+  # ========== 经典免费订阅 ==========
+  - name: freefq
+    type: subscription
+    url: "https://raw.githubusercontent.com/freefq/free/master/v2"
+    enabled: true
+  - name: freefq-ghproxy
+    type: subscription
+    url: "https://ghproxy.net/https://raw.githubusercontent.com/freefq/free/master/v2"
+    enabled: false   # 主源可用时关镜像；主源失败可开
+  - name: pawdroid
+    type: subscription
+    url: "https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub"
+    enabled: true
+  - name: ermaozi
+    type: subscription
+    url: "https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/v2ray.txt"
+    enabled: true
+  - name: ripaojiedian
+    type: subscription
+    url: "https://raw.githubusercontent.com/ripaojiedian/freenode/main/sub"
+    enabled: true
+  - name: free18
+    type: subscription
+    url: "https://raw.githubusercontent.com/free18/v2ray/main/v.txt"
+    enabled: true
+  - name: mfuu-v2ray
+    type: subscription
+    url: "https://raw.githubusercontent.com/mfuu/v2ray/master/v2ray"
+    enabled: true
+  - name: azadnet
+    type: subscription
+    url: "https://raw.githubusercontent.com/AzadNetCH/Clash/main/AzadNet_iOS.txt"
+    enabled: true
+  - name: vxiaov
+    type: subscription
+    url: "https://raw.githubusercontent.com/vxiaov/free_proxies/main/links.txt"
+    enabled: true
+  # ========== 大型聚合 / 分协议 ==========
+  - name: mahdibland-base64
+    type: subscription
+    url: "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge_base64.txt"
+    enabled: true
+  - name: mahdibland-raw
+    type: subscription
+    url: "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt"
+    enabled: true
+  - name: mahdibland-airport
+    type: subscription
+    url: "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/airport_merge_base64.txt"
+    enabled: true
+  - name: epodonios-all
+    type: subscription
+    url: "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_Sub.txt"
+    enabled: true
+  - name: epodonios-vmess
+    type: subscription
+    url: "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/Splitted-By-Protocol/vmess.txt"
+    enabled: true
+  - name: epodonios-ss
+    type: subscription
+    url: "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/Splitted-By-Protocol/ss.txt"
+    enabled: true
+  - name: epodonios-trojan
+    type: subscription
+    url: "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/Splitted-By-Protocol/trojan.txt"
+    enabled: true
+  - name: barry-far
+    type: subscription
+    url: "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/All_Configs_Sub.txt"
+    enabled: true
+  - name: soli-spirit
+    type: subscription
+    url: "https://raw.githubusercontent.com/SoliSpirit/v2ray-configs/main/all_configs.txt"
+    enabled: true
+  # ========== 其它 ==========
+  - name: xiaoji235
+    type: subscription
+    url: "https://raw.githubusercontent.com/xiaoji235/airport-free/main/v2ray.txt"
+    enabled: true
+  - name: surfboard-converted
+    type: subscription
+    url: "https://raw.githubusercontent.com/Surfboardv2ray/Proxy-sorter/main/output/converted.txt"
+    enabled: true
+  - name: surfboard-hy2
+    type: subscription
+    url: "https://raw.githubusercontent.com/Surfboardv2ray/TGParse/main/python/hy2"
+    enabled: true
+  - name: mheidari98
+    type: subscription
+    url: "https://raw.githubusercontent.com/mheidari98/.proxy/main/all"
+    enabled: true
+  # ========== 大型聚合 / 分协议 ==========
+  - name: leon406-vless
+    type: subscription
+    url: "https://raw.githubusercontent.com/Leon406/SubCrawler/main/sub/share/vless"
+    enabled: true   # 体积很大(~20MB+)，带宽紧张可关
+  - name: leon406-ss
+    type: subscription
+    url: "https://raw.githubusercontent.com/Leon406/SubCrawler/main/sub/share/ss"
+    enabled: true
+  # ========== 分协议 / 精选 ==========
+  - name: force-run-vless
+    type: subscription
+    url: "https://raw.githubusercontent.com/F0rc3Run/F0rc3Run/main/splitted-by-protocol/vless.txt"
+    enabled: true
+  - name: force-run-vmess
+    type: subscription
+    url: "https://raw.githubusercontent.com/F0rc3Run/F0rc3Run/main/splitted-by-protocol/vmess.txt"
+    enabled: true
+  - name: force-run-trojan
+    type: subscription
+    url: "https://raw.githubusercontent.com/F0rc3Run/F0rc3Run/main/splitted-by-protocol/trojan.txt"
+    enabled: true
+  # ========== 大型聚合 / 分协议 ==========
+  - name: coldwater-ss
+    type: subscription
+    url: "https://raw.githubusercontent.com/coldwater-10/V2rayAggregator/master/sub/splitted/ss.txt"
+    enabled: true
+  # ========== 分协议 / 精选 ==========
+  - name: ndsphonemy-default
+    type: subscription
+    url: "https://raw.githubusercontent.com/ndsphonemy/proxy-sub/main/default.txt"
+    enabled: true
+  - name: ndsphonemy-speed
+    type: subscription
+    url: "https://raw.githubusercontent.com/ndsphonemy/proxy-sub/main/speed.txt"
+    enabled: true
+  - name: roosterkid-raw
+    type: subscription
+    url: "https://raw.githubusercontent.com/roosterkid/openproxylist/main/V2RAY_RAW.txt"
+    enabled: true
+  - name: roosterkid-base64
+    type: subscription
+    url: "https://raw.githubusercontent.com/roosterkid/openproxylist/main/V2RAY_BASE64.txt"
+    enabled: true
+  - name: mahsa-xray
+    type: subscription
+    url: "https://raw.githubusercontent.com/MahsaNetConfigTopic/config/main/xray_final.txt"
+    enabled: true
+  # ========== 大型聚合 / 分协议 ==========
+  - name: auto-proxy-1
+    type: subscription
+    url: "https://raw.githubusercontent.com/w1770946466/Auto_proxy/main/Long_term_subscription1"
+    enabled: true
+  - name: auto-proxy-2
+    type: subscription
+    url: "https://raw.githubusercontent.com/w1770946466/Auto_proxy/main/Long_term_subscription2"
+    enabled: true
+  - name: auto-proxy-3
+    type: subscription
+    url: "https://raw.githubusercontent.com/w1770946466/Auto_proxy/main/Long_term_subscription3"
+    enabled: true
+  - name: auto-proxy-4
+    type: subscription
+    url: "https://raw.githubusercontent.com/w1770946466/Auto_proxy/main/Long_term_subscription4"
+    enabled: true
+  - name: auto-proxy-5
+    type: subscription
+    url: "https://raw.githubusercontent.com/w1770946466/Auto_proxy/main/Long_term_subscription5"
+    enabled: true
+  - name: auto-proxy-6
+    type: subscription
+    url: "https://raw.githubusercontent.com/w1770946466/Auto_proxy/main/Long_term_subscription6"
+    enabled: true
+  - name: auto-proxy-7
+    type: subscription
+    url: "https://raw.githubusercontent.com/w1770946466/Auto_proxy/main/Long_term_subscription7"
+    enabled: true
+  # ========== 合并列表 ==========
+  - name: chengaopan-list
+    type: subscription
+    url: "https://raw.githubusercontent.com/chengaopan/AutoMergePublicNodes/master/list.txt"
+    enabled: true
+  - name: chengaopan-raw
+    type: subscription
+    url: "https://raw.githubusercontent.com/chengaopan/AutoMergePublicNodes/master/list_raw.txt"
+    enabled: true
+  - name: peasoft-list
+    type: subscription
+    url: "https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.txt"
+    enabled: true
+  # ========== Clash / Mihomo YAML ==========
+  - name: anaer-clash
+    type: clash
+    url: "https://raw.githubusercontent.com/anaer/Sub/main/clash.yaml"
+    enabled: true
+  - name: peasoft-meta
+    type: clash
+    url: "https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.meta.yml"
+    enabled: true
+  - name: peasoft-yml
+    type: clash
+    url: "https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.yml"
+    enabled: true
+  - name: passcro-speed
+    type: clash
+    url: "https://raw.githubusercontent.com/zhangkaiitugithub/passcro/main/speednodes.yaml"
+    enabled: true
+  # ========== 大型聚合 / 分协议 ==========
+  - name: mahdibland-cdn
+    type: subscription
+    url: "https://cdn.jsdelivr.net/gh/mahdibland/V2RayAggregator@master/sub/sub_merge_base64.txt"
+    enabled: false  # 与 mahdibland-base64 重复
+  - name: ss-aggregator
+    type: subscription
+    url: "https://raw.githubusercontent.com/mahdibland/ShadowsocksAggregator/master/sub/sub_merge_base64.txt"
+    enabled: true  # SS 专用聚合，可与 V2RayAggregator 并存
+  # ========== itsyebekhe/PSG（高频 TG 采集） ==========
+  - name: psg-xray-mix
+    type: subscription
+    url: "https://raw.githubusercontent.com/itsyebekhe/PSG/main/subscriptions/xray/mix"
+    enabled: true
+  - name: psg-xray-mix-b64
+    type: subscription
+    url: "https://raw.githubusercontent.com/itsyebekhe/PSG/main/subscriptions/xray/mix.b64"
+    enabled: true
+  - name: psg-xray-vless
+    type: subscription
+    url: "https://raw.githubusercontent.com/itsyebekhe/PSG/main/subscriptions/xray/vless"
+    enabled: true
+  - name: psg-xray-vmess
+    type: subscription
+    url: "https://raw.githubusercontent.com/itsyebekhe/PSG/main/subscriptions/xray/vmess"
+    enabled: true
+  - name: psg-xray-reality
+    type: subscription
+    url: "https://raw.githubusercontent.com/itsyebekhe/PSG/main/subscriptions/xray/reality"
+    enabled: true
+  - name: psg-xray-ss
+    type: subscription
+    url: "https://raw.githubusercontent.com/itsyebekhe/PSG/main/subscriptions/xray/ss"
+    enabled: true
+  - name: psg-xray-hy2
+    type: subscription
+    url: "https://raw.githubusercontent.com/itsyebekhe/PSG/main/subscriptions/xray/hy2"
+    enabled: true
+  - name: psg-xray-cdn
+    type: subscription
+    url: "https://raw.githubusercontent.com/itsyebekhe/PSG/main/subscriptions/xray/cdn"
+    enabled: true   # CDN 优选池 ~1.3MB
+  - name: psg-meta-mix
+    type: clash
+    url: "https://raw.githubusercontent.com/itsyebekhe/PSG/main/subscriptions/meta/mix"
+    enabled: true
+  - name: psg-lite-mix
+    type: subscription
+    url: "https://raw.githubusercontent.com/itsyebekhe/PSG/main/lite/subscriptions/xray/mix"
+    enabled: true
+  - name: psg-lite-mix-b64
+    type: subscription
+    url: "https://raw.githubusercontent.com/itsyebekhe/PSG/main/lite/subscriptions/xray/mix.b64"
+    enabled: true
+  - name: psg-config-txt
+    type: subscription
+    url: "https://raw.githubusercontent.com/itsyebekhe/PSG/main/config.txt"
+    enabled: true
+  # ========== 社区自动爬取（2026 活跃） ==========
+  - name: ovmvo-mihomo
+    type: clash
+    url: "https://raw.githubusercontent.com/ovmvo/FreeSub/main/sub/permanent/mihomo.yaml"
+    enabled: true
+  - name: wenxig-free-txt
+    type: subscription
+    url: "https://raw.githubusercontent.com/wenxig/free-nodes-sub/main/data/sub.txt"
+    enabled: true
+  - name: wenxig-free-yml
+    type: clash
+    url: "https://raw.githubusercontent.com/wenxig/free-nodes-sub/main/data/sub.yaml"
+    enabled: true
+  - name: wenxig-dongtai-txt
+    type: subscription
+    url: "https://raw.githubusercontent.com/wenxig/dongtai-sub/main/data/sub.txt"
+    enabled: true
+  - name: wenxig-dongtai-yml
+    type: clash
+    url: "https://raw.githubusercontent.com/wenxig/dongtai-sub/main/data/sub.yaml"
+    enabled: true
+  - name: snakem-v2
+    type: subscription
+    url: "https://raw.githubusercontent.com/snakem982/proxypool/main/source/v2ray-2.txt"
+    enabled: true
+  - name: snakem-clash
+    type: clash
+    url: "https://raw.githubusercontent.com/snakem982/proxypool/main/source/clash-meta-2.yaml"
+    enabled: true
+  - name: kooker-jp
+    type: subscription
+    url: "https://raw.githubusercontent.com/kooker/FreeSubsCheck/main/kooker.jp.txt"
+    enabled: true
+  - name: kooker-mihomo
+    type: clash
+    url: "https://raw.githubusercontent.com/kooker/FreeSubsCheck/main/mihomo.yaml"
+    enabled: true
+  - name: kooker-byxiaoxi
+    type: subscription
+    url: "https://raw.githubusercontent.com/kooker/FreeSubsCheck/main/byxiaoxi.txt"
+    enabled: true
+  - name: ruking-v2
+    type: subscription
+    url: "https://raw.githubusercontent.com/Ruk1ng001/freeSub/main/v2ray"
+    enabled: true
+  - name: ruking-clash
+    type: clash
+    url: "https://raw.githubusercontent.com/Ruk1ng001/freeSub/main/clash.yaml"
+    enabled: true
+  - name: firefox-vray
+    type: subscription
+    url: "https://raw.githubusercontent.com/firefoxmmx2/v2rayshare_subcription/main/subscription/vray_sub.txt"
+    enabled: true
+  - name: firefox-clash
+    type: clash
+    url: "https://raw.githubusercontent.com/firefoxmmx2/v2rayshare_subcription/main/subscription/clash_sub.yaml"
+    enabled: true
+  - name: firefox-mihomo
+    type: clash
+    url: "https://raw.githubusercontent.com/firefoxmmx2/v2rayshare_subcription/main/subscription/mihomo_sub.yaml"
+    enabled: true
+  # ========== 大型聚合 / 分协议 ==========
+  - name: mahdi-eternity
+    type: subscription
+    url: "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/Eternity"
+    enabled: true
+  - name: mahdi-eternity-txt
+    type: subscription
+    url: "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/Eternity.txt"
+    enabled: true
+  - name: mahdi-yaml
+    type: clash
+    url: "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge_yaml.yml"
+    enabled: true
+  - name: mahdi-vmess
+    type: subscription
+    url: "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/splitted/vmess.txt"
+    enabled: true
+  - name: mahdi-ss
+    type: subscription
+    url: "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/splitted/ss.txt"
+    enabled: true
+  - name: mahdi-trojan
+    type: subscription
+    url: "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/splitted/trojan.txt"
+    enabled: true
+  - name: mahdi-ssr
+    type: subscription
+    url: "https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/splitted/ssr.txt"
+    enabled: true
+  - name: coldwater-all
+    type: subscription
+    url: "https://raw.githubusercontent.com/coldwater-10/V2rayAggregator/master/sub/sub_merge_base64.txt"
+    enabled: true
+  - name: coldwater-yaml
+    type: clash
+    url: "https://raw.githubusercontent.com/coldwater-10/V2rayAggregator/master/sub/sub_merge_yaml.yml"
+    enabled: true
+  - name: coldwater-vmess
+    type: subscription
+    url: "https://raw.githubusercontent.com/coldwater-10/V2rayAggregator/master/sub/splitted/vmess.txt"
+    enabled: true
+  - name: coldwater-trojan
+    type: subscription
+    url: "https://raw.githubusercontent.com/coldwater-10/V2rayAggregator/master/sub/splitted/trojan.txt"
+    enabled: true
+  - name: coldwater-ssr
+    type: subscription
+    url: "https://raw.githubusercontent.com/coldwater-10/V2rayAggregator/master/sub/splitted/ssr.txt"
+    enabled: true
+  - name: barry-vless
+    type: subscription
+    url: "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/Splitted-By-Protocol/vless.txt"
+    enabled: true
+  - name: barry-vmess
+    type: subscription
+    url: "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/Splitted-By-Protocol/vmess.txt"
+    enabled: true
+  - name: barry-trojan
+    type: subscription
+    url: "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/Splitted-By-Protocol/trojan.txt"
+    enabled: true
+  - name: barry-ss
+    type: subscription
+    url: "https://raw.githubusercontent.com/barry-far/V2ray-Config/main/Splitted-By-Protocol/ss.txt"
+    enabled: true
+  - name: epodonios-vless
+    type: subscription
+    url: "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/Splitted-By-Protocol/vless.txt"
+    enabled: true
+  - name: epodonios-b64
+    type: subscription
+    url: "https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/All_Configs_base64_Sub.txt"
+    enabled: true
+  - name: soli-vless
+    type: subscription
+    url: "https://raw.githubusercontent.com/SoliSpirit/v2ray-configs/main/Protocols/vless.txt"
+    enabled: true
+  - name: soli-vmess
+    type: subscription
+    url: "https://raw.githubusercontent.com/SoliSpirit/v2ray-configs/main/Protocols/vmess.txt"
+    enabled: true
+  - name: soli-trojan
+    type: subscription
+    url: "https://raw.githubusercontent.com/SoliSpirit/v2ray-configs/main/Protocols/trojan.txt"
+    enabled: true
+  - name: soli-ss
+    type: subscription
+    url: "https://raw.githubusercontent.com/SoliSpirit/v2ray-configs/main/Protocols/ss.txt"
+    enabled: true
+  - name: surf-vless
+    type: subscription
+    url: "https://raw.githubusercontent.com/Surfboardv2ray/TGParse/main/python/vless"
+    enabled: true
+  - name: surf-vmess
+    type: subscription
+    url: "https://raw.githubusercontent.com/Surfboardv2ray/TGParse/main/python/vmess"
+    enabled: true
+  - name: surf-trojan
+    type: subscription
+    url: "https://raw.githubusercontent.com/Surfboardv2ray/TGParse/main/python/trojan"
+    enabled: true
+  - name: ms-vmess
+    type: subscription
+    url: "https://raw.githubusercontent.com/mheidari98/.proxy/main/vmess"
+    enabled: true
+  - name: ms-vless
+    type: subscription
+    url: "https://raw.githubusercontent.com/mheidari98/.proxy/main/vless"
+    enabled: true
+  - name: ms-trojan
+    type: subscription
+    url: "https://raw.githubusercontent.com/mheidari98/.proxy/main/trojan"
+    enabled: true
+  - name: ms-ss
+    type: subscription
+    url: "https://raw.githubusercontent.com/mheidari98/.proxy/main/ss"
+    enabled: true
+  - name: leon406-hy2
+    type: subscription
+    url: "https://raw.githubusercontent.com/Leon406/SubCrawler/main/sub/share/hysteria2"
+    enabled: true
+  - name: leon406-ssr
+    type: subscription
+    url: "https://raw.githubusercontent.com/Leon406/SubCrawler/main/sub/share/ssr"
+    enabled: true
+  - name: auto-proxy-8
+    type: subscription
+    url: "https://raw.githubusercontent.com/w1770946466/Auto_proxy/main/Long_term_subscription8"
+    enabled: true
+  - name: peasoft-raw
+    type: subscription
+    url: "https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list_raw.txt"
+    enabled: true
+  - name: ndsphonemy-all
+    type: subscription
+    url: "https://raw.githubusercontent.com/ndsphonemy/proxy-sub/main/all.txt"
+    enabled: true   # ~34MB 超大，带宽紧张可关
+  # ========== Clash / Mihomo YAML ==========
+  - name: free18-clash
+    type: clash
+    url: "https://raw.githubusercontent.com/free18/v2ray/main/c.yaml"
+    enabled: true
+  - name: ermaozi-clash
+    type: clash
+    url: "https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/clash.yml"
+    enabled: true
+  - name: ripao-clash
+    type: clash
+    url: "https://raw.githubusercontent.com/ripaojiedian/freenode/main/clash"
+    enabled: true
+  - name: mfuu-clash
+    type: clash
+    url: "https://raw.githubusercontent.com/mfuu/v2ray/master/clash.yaml"
+    enabled: true
+  - name: chengaopan-clash
+    type: clash
+    url: "https://raw.githubusercontent.com/chengaopan/AutoMergePublicNodes/master/list.yml"
+    enabled: true
+
+protocols:
+  - vmess
+  - vless
+  - trojan
+  - ss
+  - ssr
+  - hysteria2
+  - hy2
+  - tuic
+
+filter:
+  max_latency_ms: 2500
+  min_success: true
+  drop_invalid: true
+  prefer_tls: false
+  max_nodes: 500
+  sort_by: score
+  min_score: 70
+  prune_after_quality: true
+  max_store_nodes: 8000
+
+export:
+  dir: "output"
+  formats:
+    - raw
+    - base64
+    - clash
+    - json
+  filename_prefix: "nodes"
+
+
+# 定时任务：VPS 上建议 enabled: true
+# 环境变量 NODE_HUNTER_SCHEDULE=1 可强制开启
+schedule:
+  enabled: true
+  interval_min: 180          # 每 3 小时
+  job: full                  # full | fetch | quality
+  run_on_start: false        # 启动立刻跑一轮（调试可 true）
+  skip_ai: true              # 定时全流程跳过 AI，更快
+  max_test: 1200
+  rounds: 2
+  jitter_sec: 45
+
+# 对外订阅发布（其他用户远程拉取）
+# TOKEN 可用环境变量 NODE_HUNTER_TOKEN 覆盖；PUBLIC_URL 用 NODE_HUNTER_PUBLIC_URL
+publish:
+  enabled: true
+  token: ""                  # 建议生产设置随机串，客户端 ?token=xxx
+  path_prefix: "/sub"
+  min_score: 70
+  max_nodes: 500
+  alive_only: true
+  formats:
+    - raw
+    - base64
+    - clash
+  cache_sec: 120
+  pre_render: true
+  max_countries: 30
+  public_url: ""             # 例: https://sub.example.com
+
+
+# IP 国家标注（GeoLite2-Country + 名称启发）
+geo:
+  enabled: true
+  db_path: "data/GeoLite2-Country.mmdb"
+  auto_download: true
+  download_url: ""           # 空=内置 P3TERX 镜像
+  annotate_after_quality: true
+  rename_with_flag: true
+
+
+# 企业安全 / 限流
+
+# 真实协议拨测（需安装 sing-box）
+dial:
+  enabled: true
+  bin: "/opt/node-hunter/bin/sing-box"  # 空=PATH 自动查找；本地可改 PATH
+  engine: sing-box
+  concurrency: 4
+  timeout_sec: 18
+  test_url: "https://www.cloudflare.com/cdn-cgi/trace"
+  max_nodes: 100
+  after_quality: true        # true 则 full/quality 后自动真测 TopN
+  after_quality_max: 60
+
+security:
+  admin_token: ""            # 空则管理 API 使用 publish.token / NODE_HUNTER_TOKEN
+  allow_query_token: true
+  sub_rps: 20
+  sub_burst: 40
+  api_rps: 30
+  api_burst: 60
+
+server:
+  read_header_timeout_sec: 10
+  shutdown_timeout_sec: 30
+  enable_metrics: true
+  enable_pprof: false
+
+sqlite:
+  enabled: true
+  path: "data/node-hunter.db"
+
+logging:
+  level: info

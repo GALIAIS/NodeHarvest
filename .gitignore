@@ -1,0 +1,40 @@
+# Binaries
+/bin/*
+!/bin/.gitkeep
+/node-hunter
+/node-hunter-server
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Runtime
+output/*
+!output/.gitkeep
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+*.pid
+
+# GeoIP / SQLite (downloaded or generated)
+data/*.mmdb
+data/*.db
+data/*.db-*
+
+# Node / Next
+web/node_modules/
+web/.next/
+web/out/
+web/.env*.local
+
+# Go
+vendor/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+*.log

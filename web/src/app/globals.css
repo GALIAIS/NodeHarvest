@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+:root {
+  --background: #070b14;
+  --foreground: #e2e8f0;
+  --card: #0f172a;
+  --muted: #94a3b8;
+  --accent: #22d3ee;
+  --accent-2: #fbbf24;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+* {
+  border-color: rgb(30 41 59 / 0.8);
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+}
+
+::selection {
+  background: rgb(34 211 238 / 0.3);
+  color: #f8fafc;
+}
+
+/* thin scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(51 65 85) transparent;
+}
+
+.table-wrap {
+  overflow: auto;
+}
+
+.table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table-wrap th {
+  text-align: left;
+  padding: 0.65rem 0.75rem;
+  color: rgb(100 116 139);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid rgb(30 41 59);
+  white-space: nowrap;
+}
+
+.table-wrap td {
+  padding: 0.7rem 0.75rem;
+  border-bottom: 1px solid rgb(15 23 42);
+  color: rgb(203 213 225);
+  vertical-align: middle;
+}
+
+.table-wrap tr:hover td {
+  background: rgb(15 23 42 / 0.55);
+}

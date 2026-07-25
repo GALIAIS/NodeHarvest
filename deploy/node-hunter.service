@@ -1,0 +1,28 @@
+[Unit]
+Description=node-hunter API + scheduler + subscription publisher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nodehunter
+Group=nodehunter
+WorkingDirectory=/opt/node-hunter
+ExecStart=/opt/node-hunter/bin/node-hunter-server -addr 0.0.0.0:8080 -config configs/config.yaml -data data
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+# 环境变量（也可用 EnvironmentFile）
+Environment=NODE_HUNTER_SCHEDULE=1
+Environment=NODE_HUNTER_TOKEN=change-me-please
+Environment=NODE_HUNTER_PUBLIC_URL=https://sub.example.com
+Environment=TZ=Asia/Shanghai
+# EnvironmentFile=-/opt/node-hunter/.env
+
+# 安全加固（可按需放宽）
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

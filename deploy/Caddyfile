@@ -1,0 +1,14 @@
+# 替换 sub.example.com 为你的域名
+sub.example.com {
+	encode gzip
+	reverse_proxy node-hunter:8080
+
+	# 可选：只暴露订阅，不暴露管理 API
+	# @api path /api/*
+	# respond @api 404
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
+}
