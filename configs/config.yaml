@@ -526,7 +526,7 @@ export:
 # 环境变量 NODE_HUNTER_SCHEDULE=1 可强制开启
 schedule:
   enabled: true
-  interval_min: 180          # 每 3 小时
+  interval_min: 30           # 每 30 分钟
   job: full                  # full | fetch | quality
   run_on_start: false        # 启动立刻跑一轮（调试可 true）
   skip_ai: true              # 定时全流程跳过 AI，更快
