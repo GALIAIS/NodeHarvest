@@ -97,6 +97,13 @@ func (s *Store) UpsertNodes(nodes []*model.Node) {
 				old.Dial = n.Dial
 				old.Verified = n.Verified
 			}
+			if n.Purity != nil {
+				old.Purity = n.Purity
+			}
+			// 允许拨测结果把 Verified 写回（即使无新 Dial 指针变化）
+			if n.Verified {
+				old.Verified = true
+			}
 			if n.RawURI != "" {
 				old.RawURI = n.RawURI
 			}
