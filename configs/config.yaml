@@ -573,9 +573,10 @@ dial:
   concurrency: 4
   timeout_sec: 18
   test_url: "https://www.cloudflare.com/cdn-cgi/trace"
-  max_nodes: 100
-  after_quality: true        # true 则 full/quality 后自动真测 TopN
-  after_quality_max: 60
+  max_nodes: 0               # 0=不限制，HQ 有多少测多少
+  batch_size: 200            # 多轮真拨每批数量
+  after_quality: true        # quality/full 后自动真拨
+  after_quality_max: 0       # 0=全部 HQ（按 batch_size 多轮）
 
 security:
   admin_token: ""            # 空则管理 API 使用 publish.token / NODE_HUNTER_TOKEN

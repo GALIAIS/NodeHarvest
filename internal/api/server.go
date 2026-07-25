@@ -281,14 +281,17 @@ func (s *Server) handleStartDial(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDialStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := s.svc.Config()
 	status := map[string]any{
-		"enabled":       cfg.Dial.Enabled,
-		"engine":        cfg.Dial.Engine,
-		"bin":           cfg.Dial.Bin,
-		"concurrency":   cfg.Dial.Concurrency,
-		"timeout_sec":   cfg.Dial.TimeoutSec,
-		"test_url":      cfg.Dial.TestURL,
-		"max_nodes":     cfg.Dial.MaxNodes,
-		"after_quality": cfg.Dial.AfterQuality,
+		"enabled":            cfg.Dial.Enabled,
+		"engine":             cfg.Dial.Engine,
+		"bin":                cfg.Dial.Bin,
+		"concurrency":        cfg.Dial.Concurrency,
+		"timeout_sec":        cfg.Dial.TimeoutSec,
+		"test_url":           cfg.Dial.TestURL,
+		"max_nodes":          cfg.Dial.MaxNodes, // 0=全部 HQ
+		"batch_size":         cfg.Dial.BatchSize,
+		"after_quality":      cfg.Dial.AfterQuality,
+		"after_quality_max":  cfg.Dial.AfterQualityMax, // 0=全部 HQ
+		"all_hq":             cfg.Dial.MaxNodes <= 0 || cfg.Dial.AfterQualityMax <= 0,
 	}
 	vn := s.svc.Store().ListNodes(store.NodeFilter{VerifiedOnly: true, Limit: 5000})
 	status["verified_count"] = len(vn)

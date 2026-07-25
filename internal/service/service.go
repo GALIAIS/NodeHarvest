@@ -397,15 +397,18 @@ func (s *Service) doQuality(ctx context.Context, j *model.Job, p0, p1 float64) e
 		}
 	}
 
-	// 可选：quality 后自动对 TopN 做真实协议拨测
+	// 可选：quality 后自动真拨（AfterQualityMax=0 表示全部 HQ，按 batch_size 多轮）
 	if s.cfg.Dial.Enabled && s.cfg.Dial.AfterQuality {
 		mid := p0 + (p1-p0)*0.93
-		// 注入 limit
 		if j.Options == nil {
 			j.Options = map[string]any{}
 		}
 		if _, ok := j.Options["max_dial"]; !ok {
+			// 0 = 全部 HQ
 			j.Options["max_dial"] = float64(s.cfg.Dial.AfterQualityMax)
+		}
+		if _, ok := j.Options["all_hq"]; !ok && s.cfg.Dial.AfterQualityMax <= 0 {
+			j.Options["all_hq"] = true
 		}
 		if err := s.doDial(ctx, j, mid, p1); err != nil {
 			slog.Warn("dial after quality", "err", err)
@@ -450,61 +453,124 @@ func (s *Service) doDial(ctx context.Context, j *model.Job, p0, p1 float64) erro
 	}
 	s.updateJob(j, model.JobRunning, p0, "real protocol dial starting")
 
+	// max_dial: 显式 >0 限制数量；0 / all_hq=true = 全部 HQ
 	maxDial := s.cfg.Dial.MaxNodes
-	if v, ok := j.Options["max_dial"].(float64); ok && int(v) > 0 {
+	if v, ok := j.Options["max_dial"].(float64); ok {
 		maxDial = int(v)
+	} else if v, ok := j.Options["max_dial"].(int); ok {
+		maxDial = v
 	}
-	if maxDial <= 0 {
-		maxDial = 40
+	allHQ := maxDial <= 0
+	if v, ok := j.Options["all_hq"].(bool); ok && v {
+		allHQ = true
+		maxDial = 0
+	}
+
+	batchSize := s.cfg.Dial.BatchSize
+	if batchSize <= 0 {
+		batchSize = 200
+	}
+	if v, ok := j.Options["batch_size"].(float64); ok && int(v) > 0 {
+		batchSize = int(v)
 	}
 
 	onlyUnverified := true
 	if v, ok := j.Options["force"].(bool); ok && v {
 		onlyUnverified = false
 	}
-	// 从大池中按国家/协议分散选取，避免只测 TCP 假活的超低延迟节点
-	list := s.pickDialCandidates(maxDial, onlyUnverified)
+
+	list := s.pickDialCandidates(maxDial, onlyUnverified, allHQ)
 	if len(list) == 0 {
 		return fmt.Errorf("no dialable nodes (need ss/vmess/vless/trojan/hy2)")
 	}
-	j.Stats["dial_pool_mode"] = "diversified"
+	if allHQ {
+		j.Stats["dial_pool_mode"] = "all_hq_batched"
+	} else {
+		j.Stats["dial_pool_mode"] = "limited_diversified"
+	}
+	j.Stats["dial_batch_size"] = batchSize
+	j.Stats["dial_planned"] = len(list)
 
-	d, err := dialer.New(dialer.Options{
+	// 解析一次引擎信息（每轮可重建 dialer 以绑定进度）
+	probe, err := dialer.New(dialer.Options{
 		Bin:         s.cfg.Dial.Bin,
 		Engine:      s.cfg.Dial.Engine,
 		Concurrency: s.cfg.Dial.Concurrency,
 		Timeout:     time.Duration(s.cfg.Dial.TimeoutSec) * time.Second,
 		TestURL:     s.cfg.Dial.TestURL,
 		WorkDir:     "data/dial-tmp",
-		OnProgress: func(done, total int) {
-			prog := p0 + (p1-p0)*float64(done)/float64(total)
-			if done%5 == 0 || done == total {
-				s.updateJob(j, model.JobRunning, prog, fmt.Sprintf("dial %d/%d", done, total))
-			}
-		},
 	})
 	if err != nil {
 		return fmt.Errorf("%w; %s", err, dialer.InstallHint())
 	}
-	j.Stats["dial_engine"] = d.Engine()
-	j.Stats["dial_bin"] = d.Bin()
+	j.Stats["dial_engine"] = probe.Engine()
+	j.Stats["dial_bin"] = probe.Bin()
 	j.Stats["dial_target"] = s.cfg.Dial.TestURL
-	j.Stats["dial_planned"] = len(list)
 
-	s.updateJob(j, model.JobRunning, p0+1, fmt.Sprintf("dialing %d nodes via %s", len(list), d.Engine()))
-	d.TestAll(ctx, list)
-	s.store.UpsertNodes(list)
+	total := len(list)
+	rounds := (total + batchSize - 1) / batchSize
+	j.Stats["dial_rounds"] = rounds
+	s.updateJob(j, model.JobRunning, p0+0.5, fmt.Sprintf("dial %d HQ nodes in %d rounds x%d via %s", total, rounds, batchSize, probe.Engine()))
 
 	okN, failN := 0, 0
 	var latSum int64
-	for _, n := range list {
-		if n.Dial != nil && n.Dial.OK {
-			okN++
-			latSum += n.Dial.LatencyMS
-		} else {
-			failN++
+	doneTotal := 0
+
+	for r := 0; r < rounds; r++ {
+		if err := ctx.Err(); err != nil {
+			j.Stats["dial_canceled_at"] = doneTotal
+			return err
 		}
+		start := r * batchSize
+		end := start + batchSize
+		if end > total {
+			end = total
+		}
+		batch := list[start:end]
+		round := r + 1
+		s.updateJob(j, model.JobRunning, p0+(p1-p0)*float64(start)/float64(total),
+			fmt.Sprintf("dial round %d/%d (%d-%d/%d)", round, rounds, start+1, end, total))
+
+		baseDone := doneTotal
+		d, err := dialer.New(dialer.Options{
+			Bin:         s.cfg.Dial.Bin,
+			Engine:      s.cfg.Dial.Engine,
+			Concurrency: s.cfg.Dial.Concurrency,
+			Timeout:     time.Duration(s.cfg.Dial.TimeoutSec) * time.Second,
+			TestURL:     s.cfg.Dial.TestURL,
+			WorkDir:     "data/dial-tmp",
+			OnProgress: func(done, batchTotal int) {
+				cur := baseDone + done
+				prog := p0 + (p1-p0)*float64(cur)/float64(total)
+				if done%10 == 0 || done == batchTotal {
+					s.updateJob(j, model.JobRunning, prog,
+						fmt.Sprintf("dial round %d/%d overall %d/%d", round, rounds, cur, total))
+				}
+			},
+		})
+		if err != nil {
+			return err
+		}
+		d.TestAll(ctx, batch)
+		s.store.UpsertNodes(batch)
+
+		for _, n := range batch {
+			if n.Dial != nil && n.Dial.OK {
+				okN++
+				latSum += n.Dial.LatencyMS
+			} else {
+				failN++
+			}
+		}
+		doneTotal = end
+		j.Stats["dial_ok"] = okN
+		j.Stats["dial_fail"] = failN
+		j.Stats["dial_done"] = doneTotal
+		j.Stats["verified_total"] = len(s.store.ListNodes(store.NodeFilter{VerifiedOnly: true, Limit: 20000}))
+		s.updateJob(j, model.JobRunning, p0+(p1-p0)*float64(doneTotal)/float64(total),
+			fmt.Sprintf("dial round %d/%d done ok=%d fail=%d", round, rounds, okN, failN))
 	}
+
 	avg := int64(0)
 	if okN > 0 {
 		avg = latSum / int64(okN)
@@ -512,31 +578,33 @@ func (s *Service) doDial(ctx context.Context, j *model.Job, p0, p1 float64) erro
 	j.Stats["dial_ok"] = okN
 	j.Stats["dial_fail"] = failN
 	j.Stats["dial_avg_ms"] = avg
-	j.Stats["verified_total"] = len(s.store.ListNodes(store.NodeFilter{VerifiedOnly: true, Limit: 5000}))
-	s.updateJob(j, model.JobRunning, p1, dialer.Summary(list))
+	j.Stats["verified_total"] = len(s.store.ListNodes(store.NodeFilter{VerifiedOnly: true, Limit: 20000}))
+	s.updateJob(j, model.JobRunning, p1, fmt.Sprintf("dial ok=%d fail=%d rounds=%d planned=%d", okN, failN, rounds, total))
 	return nil
 }
 
-// pickDialCandidates 从存活高分池中分散选取拨测目标。
-// 纯按 score 排序会优先测到 CDN 假活（TCP 2–5ms）节点，真拨几乎全失败。
-func (s *Service) pickDialCandidates(maxDial int, onlyUnverified bool) []*model.Node {
-	if maxDial <= 0 {
-		maxDial = 40
-	}
+// pickDialCandidates 选取拨测目标。
+// allHQ=true 或 maxDial<=0：取全部存活 HQ（可拨协议），按 score 排序后整表返回。
+// 否则：限制数量 + 国家/协议分散，避免只测 CDN 假活。
+func (s *Service) pickDialCandidates(maxDial int, onlyUnverified bool, allHQ bool) []*model.Node {
 	minScore := 0.0
 	if s.cfg != nil && s.cfg.Filter.MinScore > 0 {
 		minScore = s.cfg.Filter.MinScore
 	}
-	poolLimit := maxDial * 25
-	if poolLimit < 200 {
-		poolLimit = 200
-	}
-	if poolLimit > 3000 {
-		poolLimit = 3000
+	// 全量 HQ：不 Limit；限量模式：放大采样池
+	poolLimit := 0
+	if !allHQ && maxDial > 0 {
+		poolLimit = maxDial * 25
+		if poolLimit < 200 {
+			poolLimit = 200
+		}
+		if poolLimit > 8000 {
+			poolLimit = 8000
+		}
 	}
 	candidates := s.store.ListNodes(store.NodeFilter{
 		AliveOnly:   true,
-		HighQuality: minScore >= 70,
+		HighQuality: minScore >= 70 || minScore <= 0,
 		MinScore:    minScore,
 		Limit:       poolLimit,
 	})
@@ -556,17 +624,15 @@ func (s *Service) pickDialCandidates(maxDial int, onlyUnverified bool) []*model.
 		if onlyUnverified && n.Verified {
 			continue
 		}
-		// 非 force 时跳过已明确 dial-fail 的节点，腾出配额给新候选
-		if onlyUnverified && hasTag(n.Tags, "dial-fail") {
+		// 限量模式才跳过 dial-fail；全量 HQ 要把所有未 verified 的都测到
+		if !allHQ && onlyUnverified && hasTag(n.Tags, "dial-fail") {
 			continue
 		}
 		latMs := n.Latency.Milliseconds()
 		if latMs <= 0 && n.Quality != nil {
 			latMs = n.Quality.AvgLatencyMS
 		}
-		// 基础分：质量分
 		sc := n.Score
-		// 过低 TCP 延迟（常见 CDN 边缘）降权
 		if latMs > 0 && latMs < 8 {
 			sc -= 25
 		} else if latMs >= 15 && latMs <= 800 {
@@ -574,14 +640,16 @@ func (s *Service) pickDialCandidates(maxDial int, onlyUnverified bool) []*model.
 		} else if latMs > 1500 {
 			sc -= 10
 		}
-		// 已验证成功过的略优先（force 重测时）
 		if n.Verified {
 			sc += 5
 		}
-		// 协议多样性：ss/trojan/hy2 略加权（库内 vless 过多）
 		switch n.Protocol {
 		case model.ProtoSS, model.ProtoTrojan, model.ProtoHysteria2:
 			sc += 3
+		}
+		// 未测过的优先于已 dial-fail（全量时先测新的）
+		if hasTag(n.Tags, "dial-fail") {
+			sc -= 5
 		}
 		ranked = append(ranked, scored{n: n, score: sc})
 	}
@@ -592,7 +660,19 @@ func (s *Service) pickDialCandidates(maxDial int, onlyUnverified bool) []*model.
 		return ranked[i].n.Latency < ranked[j].n.Latency
 	})
 
-	// 按 国家+协议 配额分散，避免同一 CDN 源刷屏
+	// 全部 HQ：直接返回全表
+	if allHQ || maxDial <= 0 {
+		out := make([]*model.Node, 0, len(ranked))
+		for _, it := range ranked {
+			out = append(out, it.n)
+		}
+		if len(out) == 0 && onlyUnverified {
+			return s.pickDialCandidates(0, false, true)
+		}
+		return out
+	}
+
+	// 限量：国家/协议分散
 	perKey := maxDial/8 + 2
 	if perKey < 3 {
 		perKey = 3
@@ -603,7 +683,6 @@ func (s *Service) pickDialCandidates(maxDial int, onlyUnverified bool) []*model.
 	usedKey := map[string]int{}
 	usedServer := map[string]int{}
 	out := make([]*model.Node, 0, maxDial)
-	// 第一轮：严格配额
 	for _, it := range ranked {
 		if len(out) >= maxDial {
 			break
@@ -624,7 +703,6 @@ func (s *Service) pickDialCandidates(maxDial int, onlyUnverified bool) []*model.
 		usedServer[n.Server]++
 		out = append(out, n)
 	}
-	// 第二轮：填满剩余名额
 	if len(out) < maxDial {
 		seen := map[string]bool{}
 		for _, n := range out {
@@ -644,9 +722,8 @@ func (s *Service) pickDialCandidates(maxDial int, onlyUnverified bool) []*model.
 			out = append(out, it.n)
 		}
 	}
-	// 兜底：若 onlyUnverified 滤太狠，放宽 dial-fail 再取
 	if len(out) == 0 && onlyUnverified {
-		return s.pickDialCandidates(maxDial, false)
+		return s.pickDialCandidates(maxDial, false, false)
 	}
 	return out
 }

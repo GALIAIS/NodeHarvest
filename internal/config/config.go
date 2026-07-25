@@ -34,10 +34,13 @@ type DialConfig struct {
 	Concurrency int    `yaml:"concurrency"`  // 同时核心实例数
 	TimeoutSec  int    `yaml:"timeout_sec"`
 	TestURL     string `yaml:"test_url"`
-	MaxNodes    int    `yaml:"max_nodes"`    // 单次最多拨测
-	// AfterQuality 在 quality/full 后自动对 TopN 做真测
+	// MaxNodes 单次最多拨测；0=不限制，对全部 HQ 分批真拨
+	MaxNodes int `yaml:"max_nodes"`
+	// BatchSize 多轮真拨每批数量（默认 200）
+	BatchSize int `yaml:"batch_size"`
+	// AfterQuality 在 quality/full 后自动真拨
 	AfterQuality bool `yaml:"after_quality"`
-	// AfterQualityMax 自动真测数量
+	// AfterQualityMax 自动真测数量；0=全部 HQ（按 batch_size 多轮）
 	AfterQualityMax int `yaml:"after_quality_max"`
 }
 
@@ -199,9 +202,10 @@ func Default() *Config {
 			Concurrency:     4,
 			TimeoutSec:      18,
 			TestURL:         "https://www.cloudflare.com/cdn-cgi/trace",
-			MaxNodes:        80,
-			AfterQuality:    false, // 手动或定时单独开；避免拖慢 3h full
-			AfterQualityMax: 40,
+			MaxNodes:        0, // 0=全部 HQ
+			BatchSize:       200,
+			AfterQuality:    false,
+			AfterQualityMax: 0, // 0=quality 后对全部 HQ 多轮真拨
 		},
 		Security: SecurityConfig{
 			AllowQueryToken: true,
@@ -345,11 +349,9 @@ func (c *Config) normalize() {
 	if c.Dial.TestURL == "" {
 		c.Dial.TestURL = "https://www.cloudflare.com/cdn-cgi/trace"
 	}
-	if c.Dial.MaxNodes <= 0 {
-		c.Dial.MaxNodes = 80
-	}
-	if c.Dial.AfterQualityMax <= 0 {
-		c.Dial.AfterQualityMax = 40
+	// MaxNodes / AfterQualityMax: 0 表示不限制（全部 HQ），不再强制改成正数
+	if c.Dial.BatchSize <= 0 {
+		c.Dial.BatchSize = 200
 	}
 	if c.Dial.Engine == "" {
 		c.Dial.Engine = "sing-box"

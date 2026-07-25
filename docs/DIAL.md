@@ -29,9 +29,10 @@ dial:
   concurrency: 4
   timeout_sec: 18
   test_url: "https://www.cloudflare.com/cdn-cgi/trace"
-  max_nodes: 80
-  after_quality: false      # true=full/quality 后自动真测
-  after_quality_max: 40
+  max_nodes: 0              # 0=全部 HQ；>0 则限制单次数量
+  batch_size: 200           # 多轮，每批 200
+  after_quality: true       # full/quality 后自动真拨
+  after_quality_max: 0      # 0=全部 HQ；>0 则只测 TopN
 ```
 
 ## API
@@ -61,21 +62,20 @@ curl https://node.galiais.com/api/pools
 4. 失败：`tags` 含 `dial-fail`，保留 TCP 结果
 5. 当 `verified >= 10` 时，**默认 `/sub` 优先发布 verified 池**
 
-## 候选选取（2.1.1+）
+## 候选选取（2.1.2+）
 
-纯按 TCP score 排序会优先测到 **CDN 假活**（延迟 2–5ms、TLS 通但代理不可用）。
-`pickDialCandidates` 会：
+默认 **all HQ**：存活且 score≥min_score 的节点，有多少测多少，按 `batch_size`（默认 200）多轮执行。
 
-- 从大池（约 max_dial×25）中选
-- 压低超低 TCP 延迟节点权重
-- 按 **国家 + 协议** 配额分散，同 server 限流
-- 非 `force` 时跳过已 `dial-fail` / 已 `verified`，优先测新候选
+- `max_nodes: 0` / `after_quality_max: 0` → 全部 HQ
+- 非 `force` 时跳过已 `verified`（已知可用）
+- 全量模式不跳过 `dial-fail`（会重测）
+- 若显式 `max_dial>0`：限量 + 国家/协议分散（压低 CDN 假活权重）
 
 ## 建议节奏
 
-- 定时 full：仍用 TCP 粗筛（快）
-- `after_quality: true` 后自动对分散 TopN 精筛
-- 手动：`curl -X POST .../api/jobs/dial -d '{"max_dial":80,"force":false}'`
+- 定时 full：TCP 粗筛 → 自动对全部 HQ 分批真拨
+- 手动全量：`curl -X POST .../api/jobs/dial -d '{"all_hq":true,"force":false}'`
+- 手动限量：`curl -X POST .../api/jobs/dial -d '{"max_dial":200,"force":false}'`
 
 ## 限制
 
