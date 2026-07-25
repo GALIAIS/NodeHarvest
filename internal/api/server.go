@@ -81,8 +81,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/jobs/full", s.handleStartFull)
 	s.mux.HandleFunc("POST /api/jobs/geo", s.handleStartGeo)
 	s.mux.HandleFunc("POST /api/jobs/dial", s.handleStartDial)
+	s.mux.HandleFunc("POST /api/jobs/purity", s.handleStartPurity)
 	s.mux.HandleFunc("POST /api/jobs/cancel", s.handleCancelJob)
 	s.mux.HandleFunc("GET /api/dial/status", s.handleDialStatus)
+	s.mux.HandleFunc("GET /api/purity/summary", s.handlePuritySummary)
 	s.mux.HandleFunc("GET /api/countries", s.handleCountries)
 	s.mux.HandleFunc("GET /api/sources", s.handleSources)
 	s.mux.HandleFunc("GET /api/ai/targets", s.handleAITargets)
@@ -276,6 +278,76 @@ func (s *Server) handleStartGeo(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) handleStartDial(w http.ResponseWriter, r *http.Request) {
 	s.startJob(w, r, s.svc.StartDial)
+}
+func (s *Server) handleStartPurity(w http.ResponseWriter, r *http.Request) {
+	s.startJob(w, r, s.svc.StartPurity)
+}
+
+func (s *Server) handlePuritySummary(w http.ResponseWriter, r *http.Request) {
+	nodes := s.svc.Store().ListNodes(store.NodeFilter{VerifiedOnly: true, Limit: 5000})
+	type row struct {
+		ID            string  `json:"id"`
+		Name          string  `json:"name"`
+		Country       string  `json:"country"`
+		Protocol      string  `json:"protocol"`
+		ExitIP        string  `json:"exit_ip,omitempty"`
+		CleanScore    int     `json:"clean_score"`
+		RiskScore     int     `json:"risk_score"`
+		Grade         string  `json:"grade,omitempty"`
+		IsProxy       bool    `json:"is_proxy"`
+		IsHosting     bool    `json:"is_hosting"`
+		CFChallenge   string  `json:"cf_challenge,omitempty"`
+		CFHumanLikely bool    `json:"cf_human_likely"`
+		ISP           string  `json:"isp,omitempty"`
+	}
+	out := make([]row, 0, len(nodes))
+	byGrade := map[string]int{}
+	cfOK, clean70, withPurity := 0, 0, 0
+	var sum int
+	for _, n := range nodes {
+		if n.Purity == nil {
+			continue
+		}
+		withPurity++
+		sum += n.Purity.CleanScore
+		if n.Purity.Grade != "" {
+			byGrade[n.Purity.Grade]++
+		}
+		if n.Purity.CFHumanLikely {
+			cfOK++
+		}
+		if n.Purity.CleanScore >= 70 {
+			clean70++
+		}
+		out = append(out, row{
+			ID: n.ID, Name: n.Name, Country: n.Country, Protocol: string(n.Protocol),
+			ExitIP: n.Purity.ExitIP, CleanScore: n.Purity.CleanScore, RiskScore: n.Purity.RiskScore,
+			Grade: n.Purity.Grade, IsProxy: n.Purity.IsProxy, IsHosting: n.Purity.IsHosting,
+			CFChallenge: n.Purity.CFChallenge, CFHumanLikely: n.Purity.CFHumanLikely, ISP: n.Purity.ISP,
+		})
+	}
+	// 按 clean_score 降序
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[j].CleanScore > out[i].CleanScore {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	avg := 0
+	if withPurity > 0 {
+		avg = sum / withPurity
+	}
+	writeJSON(w, map[string]any{
+		"verified_total":  len(nodes),
+		"purity_tested":   withPurity,
+		"avg_clean_score": avg,
+		"cf_human_likely": cfOK,
+		"clean_score_ge70": clean70,
+		"by_grade":        byGrade,
+		"nodes":           out,
+		"disclaimer":      "CF human check is heuristic (challenge page detection), not real Turnstile solve. Scores use ip-api proxy/hosting flags + CF signals.",
+	})
 }
 
 func (s *Server) handleDialStatus(w http.ResponseWriter, r *http.Request) {

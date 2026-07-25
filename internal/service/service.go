@@ -27,6 +27,7 @@ import (
 	"github.com/local/node-hunter/internal/model"
 	"github.com/local/node-hunter/internal/parser"
 	"github.com/local/node-hunter/internal/publish"
+	"github.com/local/node-hunter/internal/purity"
 	"github.com/local/node-hunter/internal/quality"
 	"github.com/local/node-hunter/internal/store"
 )
@@ -175,6 +176,11 @@ func (s *Service) StartDial(opts map[string]any) (*model.Job, error) {
 	return s.start("dial", opts, s.runDial)
 }
 
+// StartPurity 对 verified 节点做 IP 纯净度 + Cloudflare 挑战启发式探测
+func (s *Service) StartPurity(opts map[string]any) (*model.Job, error) {
+	return s.start("purity", opts, s.runPurity)
+}
+
 type runner func(ctx context.Context, j *model.Job)
 
 func (s *Service) start(typ string, opts map[string]any, fn runner) (*model.Job, error) {
@@ -286,6 +292,15 @@ func (s *Service) runGeo(ctx context.Context, j *model.Job) {
 	}
 	s.doExport(j)
 	s.complete(j, "geo annotate done")
+}
+
+func (s *Service) runPurity(ctx context.Context, j *model.Job) {
+	if err := s.doPurity(ctx, j, 0, 95); err != nil {
+		s.fail(j, err)
+		return
+	}
+	s.doExport(j)
+	s.complete(j, "purity done")
 }
 
 func (s *Service) runDial(ctx context.Context, j *model.Job) {
@@ -735,6 +750,94 @@ func hasTag(tags []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// doPurity 对 verified 节点做纯净度 / CF 挑战探测
+func (s *Service) doPurity(ctx context.Context, j *model.Job, p0, p1 float64) error {
+	s.updateJob(j, model.JobRunning, p0, "purity probe starting")
+	list := s.store.ListNodes(store.NodeFilter{VerifiedOnly: true, AliveOnly: true, Limit: 5000})
+	if len(list) == 0 {
+		// 兜底：有 dial ok 标记的
+		all := s.store.ListNodes(store.NodeFilter{AliveOnly: true, HighQuality: true, Limit: 500})
+		for _, n := range all {
+			if n.Verified || (n.Dial != nil && n.Dial.OK) {
+				list = append(list, n)
+			}
+		}
+	}
+	if len(list) == 0 {
+		return fmt.Errorf("no verified nodes to probe; run dial first")
+	}
+
+	maxN := 0
+	if v, ok := j.Options["max_nodes"].(float64); ok && int(v) > 0 {
+		maxN = int(v)
+	}
+	conc := 3
+	if v, ok := j.Options["concurrency"].(float64); ok && int(v) > 0 {
+		conc = int(v)
+	}
+	bin := ""
+	if s.cfg != nil {
+		bin = s.cfg.Dial.Bin
+	}
+
+	pr, err := purity.New(purity.Options{
+		Bin:         bin,
+		Concurrency: conc,
+		Timeout:     28 * time.Second,
+		WorkDir:     "data/purity-tmp",
+		MaxNodes:    maxN,
+		OnProgress: func(done, total int) {
+			prog := p0 + (p1-p0)*float64(done)/float64(total)
+			if done%5 == 0 || done == total {
+				s.updateJob(j, model.JobRunning, prog, fmt.Sprintf("purity %d/%d", done, total))
+			}
+		},
+	})
+	if err != nil {
+		return err
+	}
+	j.Stats["purity_planned"] = len(list)
+	if maxN > 0 && len(list) > maxN {
+		j.Stats["purity_planned"] = maxN
+	}
+	s.updateJob(j, model.JobRunning, p0+1, fmt.Sprintf("purity probing %v nodes", j.Stats["purity_planned"]))
+	pr.TestAll(ctx, list)
+	s.store.UpsertNodes(list)
+
+	okN, cfOK, cleanN := 0, 0, 0
+	var sumClean int
+	byGrade := map[string]int{}
+	for _, n := range list {
+		if n.Purity == nil {
+			continue
+		}
+		if n.Purity.OK {
+			okN++
+			sumClean += n.Purity.CleanScore
+		}
+		if n.Purity.CFHumanLikely {
+			cfOK++
+		}
+		if n.Purity.CleanScore >= 70 {
+			cleanN++
+		}
+		if n.Purity.Grade != "" {
+			byGrade[n.Purity.Grade]++
+		}
+	}
+	avg := 0
+	if okN > 0 {
+		avg = sumClean / okN
+	}
+	j.Stats["purity_ok"] = okN
+	j.Stats["purity_cf_ok"] = cfOK
+	j.Stats["purity_clean70"] = cleanN
+	j.Stats["purity_avg_clean"] = avg
+	j.Stats["purity_by_grade"] = byGrade
+	s.updateJob(j, model.JobRunning, p1, purity.Summary(list))
+	return nil
 }
 
 func (s *Service) doGeo(ctx context.Context, j *model.Job, p0, p1 float64) error {

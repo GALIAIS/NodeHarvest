@@ -64,6 +64,9 @@ type Node struct {
 	Dial     *DialResult `json:"dial,omitempty"`
 	Verified bool        `json:"verified"` // 最近一次真实拨测通过
 
+	// IP 纯净度 / Cloudflare 挑战探测（经代理真实出口）
+	Purity *PurityResult `json:"purity,omitempty"`
+
 	Score       float64 `json:"score"`
 	Grade       string  `json:"grade"` // S A B C D F
 	Fingerprint string  `json:"fingerprint"`
@@ -71,6 +74,29 @@ type Node struct {
 	City        string  `json:"city,omitempty"`
 	ISP         string  `json:"isp,omitempty"`
 	Tags        []string `json:"tags,omitempty"`
+}
+
+// PurityResult 出口 IP 纯净度与 Cloudflare 挑战启发式结果
+// 说明：无法代替真人完成 Turnstile/验证码，只能判断是否被要求挑战、以及常见风险库标记。
+type PurityResult struct {
+	OK           bool      `json:"ok"`                      // 代理链路可用且完成至少一项检测
+	ExitIP       string    `json:"exit_ip,omitempty"`
+	Country      string    `json:"country,omitempty"`
+	ISP          string    `json:"isp,omitempty"`
+	AS           string    `json:"as,omitempty"`
+	IsProxy      bool      `json:"is_proxy"`                 // 第三方标记为代理
+	IsHosting    bool      `json:"is_hosting"`               // 机房/托管
+	IsMobile     bool      `json:"is_mobile"`
+	RiskScore    int       `json:"risk_score"`               // 0-100，越高越脏
+	CleanScore   int       `json:"clean_score"`              // 0-100，越高越干净
+	Grade        string    `json:"grade,omitempty"`          // S A B C D F
+	CFTraceOK    bool      `json:"cf_trace_ok"`              // cdn-cgi/trace 成功
+	CFChallenge  string    `json:"cf_challenge,omitempty"`   // none|soft|hard|blocked|error
+	CFHumanLikely bool     `json:"cf_human_likely"`          // 启发式：未出挑战且页面可达
+	Notes        []string  `json:"notes,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	LatencyMS    int64     `json:"latency_ms,omitempty"`
+	TestedAt     time.Time `json:"tested_at,omitempty"`
 }
 
 // DialResult 真实协议拨测结果
