@@ -36,7 +36,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: metadata
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/galiais/nodeharvest
           tags: |
@@ -72,9 +72,12 @@ jobs:
 
       - name: Prune superseded untagged image versions
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/delete-package-versions@25ad4af5be03aef10e0b3376b248688b7a44c40b # v5
-        with:
-          package-name: nodeharvest
-          package-type: container
-          min-versions-to-keep: 0
-          delete-only-untagged-versions: "true"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/nodeharvest/versions?per_page=100" \
+            --jq '.[] | select(.metadata.container.tags | length == 0) | .id' |
+          while IFS= read -r version_id; do
+            gh api --method DELETE \
+              "/users/${GITHUB_REPOSITORY_OWNER}/packages/container/nodeharvest/versions/${version_id}"
+          done
