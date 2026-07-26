@@ -1,13 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Ban, CheckCircle2, CircleDot, RefreshCw, TerminalSquare, TimerReset } from "lucide-react";
+import {
+  AlertTriangle,
+  Ban,
+  CheckCircle2,
+  CircleDot,
+  RefreshCw,
+  TerminalSquare,
+  TimerReset,
+} from "lucide-react";
 import { api, type Job, type JobEvent, type QueuedTask } from "@/lib/api";
 import { JobActions } from "@/components/job-actions";
 import { PageHeader } from "@/components/page-header";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardEmpty, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { cn, formatTime } from "@/lib/utils";
 
@@ -98,18 +107,22 @@ export default function JobsPage() {
         description="任务写入持久化优先级队列，由独立 Worker 租约执行；事件时间线持续轮询，可追踪重试、失败与取消。"
         actions={
           <Button variant="secondary" size="sm" onClick={load}>
-            <RefreshCw className="h-3.5 w-3.5" /> 刷新
+            <RefreshCw className="size-3.5" /> 刷新
           </Button>
         }
       />
 
-      <div className="reveal space-y-5 p-4 sm:p-6 lg:p-8">
+      <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
         <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {["queued", "running", "completed", "failed", "dead", "canceled"].map((status) => (
             <Card key={status}>
-              <CardContent className="p-3.5">
-                <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600">{status}</p>
-                <p className="mt-1 font-mono text-xl text-slate-200">{queue[status] || 0}</p>
+              <CardContent className="p-4">
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                  {status}
+                </p>
+                <p className="mt-1 font-display text-2xl tabular-nums text-foreground">
+                  {queue[status] || 0}
+                </p>
               </CardContent>
             </Card>
           ))}
@@ -126,9 +139,10 @@ export default function JobsPage() {
         </Card>
 
         {err && (
-          <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
-            {err}
-          </div>
+          <Alert variant="danger">
+            <AlertTriangle />
+            <AlertDescription>{err}</AlertDescription>
+          </Alert>
         )}
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,.75fr)]">
@@ -143,30 +157,34 @@ export default function JobsPage() {
                   key={job.id}
                   onClick={() => setSelectedID(job.id)}
                   className={cn(
-                    "w-full rounded-xl border bg-slate-900/55 p-4 text-left transition-all",
+                    "w-full border border-border border-l-2 bg-card p-4 text-left transition-colors",
                     selectedID === job.id
-                      ? "border-cyan-500/35 shadow-[inset_3px_0_0_#22d3ee]"
-                      : "border-slate-800/80 hover:border-slate-700",
+                      ? "border-l-primary bg-primary/5"
+                      : "border-l-transparent hover:border-input",
                   )}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant={statusVariant(task?.status || job.status)}>{task?.status || job.status}</Badge>
-                        <span className="font-mono text-sm text-cyan-200">{job.type}</span>
-                        {task && <span className="font-mono text-[10px] text-slate-600">P{task.priority} · {task.attempts}/{task.max_attempts}</span>}
+                        <span className="font-mono text-sm text-primary">{job.type}</span>
+                        {task && (
+                          <span className="font-mono text-[10px] text-muted-foreground">
+                            P{task.priority} · {task.attempts}/{task.max_attempts}
+                          </span>
+                        )}
                       </div>
-                      <p className="mt-2 text-sm text-slate-300">{job.message || "等待执行"}</p>
+                      <p className="mt-2 text-sm text-foreground">{job.message || "等待执行"}</p>
                     </div>
-                    <p className="font-mono text-[10px] text-slate-600">{formatTime(job.created_at)}</p>
+                    <p className="font-mono text-[10px] text-muted-foreground">{formatTime(job.created_at)}</p>
                   </div>
                   {running && <Progress className="mt-3" value={job.progress} />}
-                  {job.error && <p className="mt-2 text-xs text-rose-400">{job.error}</p>}
+                  {job.error && <p className="mt-2 text-xs text-destructive">{job.error}</p>}
                 </button>
               );
             })}
             {jobs.length === 0 && (
-              <Card><CardContent className="py-16 text-center text-sm text-slate-600">还没有任务记录</CardContent></Card>
+              <Card><CardEmpty>还没有任务记录</CardEmpty></Card>
             )}
           </div>
 
@@ -174,58 +192,58 @@ export default function JobsPage() {
             <CardHeader className="flex-row items-start justify-between gap-3">
               <div className="min-w-0">
                 <CardTitle className="flex items-center gap-2">
-                  <TerminalSquare className="h-4 w-4 text-cyan-300" /> 事件时间线
+                  <TerminalSquare className="size-4 text-primary" /> 事件时间线
                 </CardTitle>
                 <CardDescription className="mt-1 truncate font-mono">{selectedID || "选择一个任务"}</CardDescription>
               </div>
               {selected && ["running", "pending"].includes(selected.status) && (
                 <Button
                   size="sm"
-                  variant="danger"
+                  variant="destructive"
                   disabled={canceling === selected.id}
                   onClick={() => cancel(selected.id)}
                 >
-                  <Ban className="h-3.5 w-3.5" /> 取消
+                  <Ban className="size-3.5" /> 取消
                 </Button>
               )}
             </CardHeader>
             <CardContent>
               {selected && (
-                <div className="mb-4 grid grid-cols-3 gap-2 border-b border-slate-800 pb-4 text-center">
-                  <div><p className="text-[10px] text-slate-600">状态</p><p className="mt-1 text-xs text-slate-300">{selected.status}</p></div>
-                  <div><p className="text-[10px] text-slate-600">进度</p><p className="mt-1 font-mono text-xs text-slate-300">{Math.round(selected.progress)}%</p></div>
-                  <div><p className="text-[10px] text-slate-600">事件</p><p className="mt-1 font-mono text-xs text-slate-300">{events.length}</p></div>
+                <div className="mb-4 grid grid-cols-3 gap-2 border-b border-border pb-4 text-center">
+                  <div><p className="text-[10px] text-muted-foreground">状态</p><p className="mt-1 text-xs text-foreground">{selected.status}</p></div>
+                  <div><p className="text-[10px] text-muted-foreground">进度</p><p className="mt-1 font-mono text-xs tabular-nums text-foreground">{Math.round(selected.progress)}%</p></div>
+                  <div><p className="text-[10px] text-muted-foreground">事件</p><p className="mt-1 font-mono text-xs tabular-nums text-foreground">{events.length}</p></div>
                 </div>
               )}
               <div className="max-h-[36rem] space-y-0 overflow-y-auto pr-1">
                 {events.map((event, index) => (
                   <div key={event.id} className="relative grid grid-cols-[1.25rem_1fr] gap-3 pb-4">
-                    {index < events.length - 1 && <span className="absolute bottom-0 left-[9px] top-4 w-px bg-slate-800" />}
-                    <span className="relative z-10 mt-0.5 flex h-[18px] w-[18px] items-center justify-center rounded-full border border-slate-700 bg-slate-950">
+                    {index < events.length - 1 && <span className="absolute bottom-0 left-[9px] top-4 w-px bg-border" />}
+                    <span className="relative z-10 mt-0.5 flex size-[18px] items-center justify-center border border-border bg-popover">
                       {event.level === "error" ? (
-                        <TimerReset className="h-2.5 w-2.5 text-rose-400" />
+                        <TimerReset className="size-2.5 text-destructive" />
                       ) : event.level === "done" ? (
-                        <CheckCircle2 className="h-2.5 w-2.5 text-emerald-400" />
+                        <CheckCircle2 className="size-2.5 text-success" />
                       ) : (
-                        <CircleDot className="h-2.5 w-2.5 text-cyan-400" />
+                        <CircleDot className="size-2.5 text-primary" />
                       )}
                     </span>
                     <div>
-                      <p className={cn("text-xs leading-5", event.level === "error" ? "text-rose-300" : "text-slate-300")}>{event.message}</p>
-                      <p className="font-mono text-[9px] text-slate-700">{formatTime(event.at)} · {event.level}</p>
+                      <p className={cn("text-xs leading-5", event.level === "error" ? "text-destructive" : "text-foreground")}>{event.message}</p>
+                      <p className="font-mono text-[9px] text-muted-foreground">{formatTime(event.at)} · {event.level}</p>
                     </div>
                   </div>
                 ))}
                 {events.length === 0 && (
-                  <p className="py-16 text-center text-xs text-slate-600">
+                  <p className="py-16 text-center text-xs text-muted-foreground">
                     {selectedID ? "等待任务事件…" : "从左侧选择任务"}
                   </p>
                 )}
               </div>
               {selected?.stats && Object.keys(selected.stats).length > 0 && (
-                <details className="mt-3 border-t border-slate-800 pt-3">
-                  <summary className="cursor-pointer text-xs text-slate-500">结果统计</summary>
-                  <pre className="mt-2 overflow-auto rounded-md bg-slate-950 p-3 font-mono text-[10px] text-slate-500">
+                <details className="mt-3 border-t border-border pt-3">
+                  <summary className="cursor-pointer text-xs text-muted-foreground">结果统计</summary>
+                  <pre className="mt-2 overflow-auto border border-border bg-popover p-3 font-mono text-[10px] text-muted-foreground">
                     {JSON.stringify(selected.stats, null, 2)}
                   </pre>
                 </details>

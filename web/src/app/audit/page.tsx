@@ -1,13 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, FileClock, Filter, RefreshCw } from "lucide-react";
+import { AlertTriangle, Download, FileClock, RefreshCw } from "lucide-react";
 import { api, type AuditEntry } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Field } from "@/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableEmpty,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { formatTime } from "@/lib/utils";
 
 export default function AuditPage() {
@@ -56,44 +67,95 @@ export default function AuditPage() {
         description="按租户隔离的不可变操作轨迹，覆盖任务、导出、源治理、凭证、用户、配置和告警动作。"
         actions={
           <>
-            <Button size="sm" variant="secondary" onClick={load}><RefreshCw className="h-3.5 w-3.5" />刷新</Button>
-            <Button size="sm" variant="outline" onClick={download} disabled={!visible.length}><Download className="h-3.5 w-3.5" />导出 JSON</Button>
+            <Button size="sm" variant="secondary" onClick={load}>
+              <RefreshCw className="size-3.5" />
+              刷新
+            </Button>
+            <Button size="sm" variant="outline" onClick={download} disabled={!visible.length}>
+              <Download className="size-3.5" />
+              导出 JSON
+            </Button>
           </>
         }
       />
       <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
         <Card>
           <CardContent className="control-grid p-4">
-            <label className="text-xs text-slate-500">开始日期<Input className="mt-1.5" type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} /></label>
-            <label className="text-xs text-slate-500">结束日期<Input className="mt-1.5" type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} /></label>
-            <label className="text-xs text-slate-500">
-              <span className="flex items-center gap-1"><Filter className="h-3 w-3" />筛选当前结果</span>
-              <Input className="mt-1.5" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="actor / action / detail" />
-            </label>
+            <Field label="开始日期" htmlFor="audit-from">
+              <Input
+                id="audit-from"
+                type="date"
+                value={from}
+                max={to || undefined}
+                onChange={(e) => setFrom(e.target.value)}
+              />
+            </Field>
+            <Field label="结束日期" htmlFor="audit-to">
+              <Input
+                id="audit-to"
+                type="date"
+                value={to}
+                min={from || undefined}
+                onChange={(e) => setTo(e.target.value)}
+              />
+            </Field>
+            <Field label="筛选当前结果" htmlFor="audit-query">
+              <Input
+                id="audit-query"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="actor / action / detail"
+              />
+            </Field>
           </CardContent>
         </Card>
-        {error && <div role="alert" className="rounded-md border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">{error}</div>}
+
+        {error && (
+          <Alert variant="danger">
+            <AlertTriangle />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
         <Card>
-          <CardContent className="p-0">
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>ID</th><th>时间</th><th>Actor</th><th>动作</th><th>详情</th></tr></thead>
-                <tbody>
-                  {visible.map((entry) => (
-                    <tr key={entry.id}>
-                      <td className="font-mono text-[10px] text-slate-700">#{entry.id}</td>
-                      <td className="whitespace-nowrap font-mono text-[10px]">{formatTime(entry.at)}</td>
-                      <td><Badge variant={entry.actor === "system" ? "secondary" : "default"}>{entry.actor}</Badge></td>
-                      <td className="font-mono text-xs text-cyan-200">{entry.action}</td>
-                      <td className="max-w-lg break-words text-xs text-slate-500">{entry.detail || "—"}</td>
-                    </tr>
-                  ))}
-                  {visible.length === 0 && (
-                    <tr><td colSpan={5} className="py-16 text-center text-slate-600"><FileClock className="mx-auto mb-3 h-5 w-5" />当前范围没有审计记录</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+          <CardContent className="px-0 pb-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>ID</TableHead>
+                  <TableHead>时间</TableHead>
+                  <TableHead>Actor</TableHead>
+                  <TableHead>动作</TableHead>
+                  <TableHead>详情</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visible.map((entry) => (
+                  <TableRow key={entry.id}>
+                    <TableCell className="font-mono text-[10px] text-muted-foreground">
+                      #{entry.id}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-[10px]">
+                      {formatTime(entry.at)}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={entry.actor === "system" ? "secondary" : "default"}>
+                        {entry.actor}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-primary">{entry.action}</TableCell>
+                    <TableCell className="max-w-lg break-words text-xs text-muted-foreground">
+                      {entry.detail || "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {visible.length === 0 && (
+                  <TableEmpty colSpan={5} icon={FileClock}>
+                    当前范围没有审计记录
+                  </TableEmpty>
+                )}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       </div>

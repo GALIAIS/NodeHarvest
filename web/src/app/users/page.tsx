@@ -1,13 +1,31 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Ban, Plus, Power, Shield, UserRound } from "lucide-react";
+import { AlertTriangle, Ban, Plus, Power, Shield, UserRound } from "lucide-react";
 import { api, type UserRecord } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Field } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableEmpty,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { formatTime } from "@/lib/utils";
 
 export default function UsersPage() {
@@ -63,75 +81,155 @@ export default function UsersPage() {
         title="用户与角色"
         description="当前租户内的本地与 OIDC 身份。viewer 只读，operator 可运行任务，admin 可管理用户和凭证。"
       />
-      <div className="reveal space-y-5 p-4 sm:p-6 lg:p-8">
-        {error && <div role="alert" className="rounded-md border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">{error}</div>}
+      <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
+        {error && (
+          <Alert variant="danger">
+            <AlertTriangle />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
         <div className="grid gap-4 xl:grid-cols-[minmax(320px,.55fr)_minmax(0,1.45fr)]">
           <Card className="h-fit">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Plus className="h-4 w-4 text-cyan-300" /> 新建本地用户</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <Plus className="size-4 text-primary" /> 新建本地用户
+              </CardTitle>
               <CardDescription>密码使用 bcrypt 哈希保存，不会通过管理 API 返回。</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={create} className="space-y-4">
-                <label className="block text-xs text-slate-500">
-                  用户名<Input className="mt-1.5" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} required />
-                </label>
-                <label className="block text-xs text-slate-500">
-                  邮箱<Input className="mt-1.5" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-                </label>
-                <label className="block text-xs text-slate-500">
-                  初始密码<Input className="mt-1.5" type="password" autoComplete="new-password" minLength={12} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
-                </label>
-                <label className="block text-xs text-slate-500">
-                  角色
-                  <select className="mt-1.5 h-10 w-full px-3 text-sm" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-                    <option value="viewer">viewer · 查看</option>
-                    <option value="operator">operator · 操作</option>
-                    <option value="admin">admin · 管理</option>
-                  </select>
-                </label>
+                <Field label="用户名" htmlFor="user-username">
+                  <Input
+                    id="user-username"
+                    value={form.username}
+                    onChange={(e) => setForm({ ...form, username: e.target.value })}
+                    required
+                  />
+                </Field>
+                <Field label="邮箱" htmlFor="user-email">
+                  <Input
+                    id="user-email"
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  />
+                </Field>
+                <Field label="初始密码" htmlFor="user-password">
+                  <Input
+                    id="user-password"
+                    type="password"
+                    autoComplete="new-password"
+                    minLength={12}
+                    value={form.password}
+                    onChange={(e) => setForm({ ...form, password: e.target.value })}
+                    required
+                  />
+                </Field>
+                <Field label="角色">
+                  <Select
+                    value={form.role}
+                    onValueChange={(value) => setForm({ ...form, role: value })}
+                  >
+                    <SelectTrigger className="w-full" aria-label="角色">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="viewer">viewer · 查看</SelectItem>
+                      <SelectItem value="operator">operator · 操作</SelectItem>
+                      <SelectItem value="admin">admin · 管理</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
                 <Button type="submit" className="w-full" disabled={busy === "create"}>
-                  <UserRound className="h-4 w-4" /> {busy === "create" ? "创建中…" : "创建用户"}
+                  <UserRound className="size-4" /> {busy === "create" ? "创建中…" : "创建用户"}
                 </Button>
               </form>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="p-0">
-              <div className="table-wrap">
-                <table>
-                  <thead><tr><th>身份</th><th>角色</th><th>来源</th><th>状态</th><th>最近登录</th><th>创建</th><th></th></tr></thead>
-                  <tbody>
-                    {users.map((user) => (
-                      <tr key={user.id}>
-                        <td>
-                          <div className="flex items-center gap-2">
-                            <span className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-800 bg-slate-950">
-                              <UserRound className="h-3.5 w-3.5 text-slate-500" />
-                            </span>
-                            <div>
-                              <p className="text-sm text-slate-200">{user.username}</p>
-                              <p className="text-[10px] text-slate-600">{user.email || user.tenant_id}</p>
-                            </div>
+            <CardContent className="px-0 pb-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>身份</TableHead>
+                    <TableHead>角色</TableHead>
+                    <TableHead>来源</TableHead>
+                    <TableHead>状态</TableHead>
+                    <TableHead>最近登录</TableHead>
+                    <TableHead>创建</TableHead>
+                    <TableHead><span className="sr-only">操作</span></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {users.map((user) => (
+                    <TableRow key={user.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span className="flex size-8 items-center justify-center border border-border bg-popover">
+                            <UserRound className="size-3.5 text-muted-foreground" />
+                          </span>
+                          <div>
+                            <p className="text-sm text-foreground">{user.username}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {user.email || user.tenant_id}
+                            </p>
                           </div>
-                        </td>
-                        <td><Badge variant={user.role === "admin" ? "warn" : user.role === "operator" ? "default" : "secondary"}><Shield className="mr-1 h-3 w-3" />{user.role}</Badge></td>
-                        <td className="font-mono text-[10px] text-slate-500">{user.oidc_issuer ? "OIDC" : "LOCAL"}</td>
-                        <td><Badge variant={user.enabled ? "success" : "secondary"}>{user.enabled ? "ACTIVE" : "DISABLED"}</Badge></td>
-                        <td className="font-mono text-[10px]">{formatTime(user.last_login_at)}</td>
-                        <td className="font-mono text-[10px]">{formatTime(user.created_at)}</td>
-                        <td>
-                          <Button size="sm" variant={user.enabled ? "secondary" : "outline"} disabled={busy === user.id} onClick={() => toggle(user)}>
-                            {user.enabled ? <Ban className="h-3.5 w-3.5" /> : <Power className="h-3.5 w-3.5" />}
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                    {users.length === 0 && <tr><td colSpan={7} className="py-16 text-center text-slate-600">暂无用户或当前身份无权查看</td></tr>}
-                  </tbody>
-                </table>
-              </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            user.role === "admin"
+                              ? "warn"
+                              : user.role === "operator"
+                                ? "default"
+                                : "secondary"
+                          }
+                        >
+                          <Shield className="size-3" />
+                          {user.role}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="font-mono text-[10px] text-muted-foreground">
+                        {user.oidc_issuer ? "OIDC" : "LOCAL"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={user.enabled ? "success" : "secondary"}>
+                          {user.enabled ? "ACTIVE" : "DISABLED"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="font-mono text-[10px]">
+                        {formatTime(user.last_login_at)}
+                      </TableCell>
+                      <TableCell className="font-mono text-[10px]">
+                        {formatTime(user.created_at)}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          size="icon-sm"
+                          variant={user.enabled ? "secondary" : "outline"}
+                          aria-label={user.enabled ? "停用" : "启用"}
+                          disabled={busy === user.id}
+                          onClick={() => toggle(user)}
+                        >
+                          {user.enabled ? (
+                            <Ban className="size-3.5" />
+                          ) : (
+                            <Power className="size-3.5" />
+                          )}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {users.length === 0 && (
+                    <TableEmpty colSpan={7} icon={UserRound}>
+                      暂无用户或当前身份无权查看
+                    </TableEmpty>
+                  )}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
         </div>

@@ -1,29 +1,40 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, Play, Radar, Sparkles, Zap } from "lucide-react";
+import { AlertTriangle, Loader2, Play, Radar, Sparkles, Zap } from "lucide-react";
 import { api } from "@/lib/api";
-import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button, type ButtonProps } from "@/components/ui/button";
 
-type Props = {
+type Kind = "full" | "fetch" | "quality" | "ai";
+
+const actions: Array<{
+  kind: Kind;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  variant: ButtonProps["variant"];
+}> = [
+  { kind: "full", label: "一键全流程", icon: Sparkles, variant: "accent" },
+  { kind: "fetch", label: "采集", icon: Play, variant: "secondary" },
+  { kind: "quality", label: "智能测速", icon: Zap, variant: "outline" },
+  { kind: "ai", label: "AI 探测", icon: Radar, variant: "ghost" },
+];
+
+export function JobActions({
+  onStarted,
+  className,
+}: {
   onStarted?: (jobId: string) => void;
-  compact?: boolean;
-};
-
-export function JobActions({ onStarted, compact }: Props) {
-  const [loading, setLoading] = useState<string | null>(null);
+  className?: string;
+}) {
+  const [loading, setLoading] = useState<Kind | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function run(kind: "full" | "fetch" | "quality" | "ai") {
+  async function run(kind: Kind) {
     setError(null);
     setLoading(kind);
     try {
-      const opts =
-        kind === "quality" || kind === "full"
-          ? { max_test: 800, rounds: 3 }
-          : kind === "ai"
-            ? {}
-            : {};
+      const opts = kind === "quality" || kind === "full" ? { max_test: 800, rounds: 3 } : {};
       const job =
         kind === "full"
           ? await api.startFull(opts)
@@ -33,50 +44,34 @@ export function JobActions({ onStarted, compact }: Props) {
               ? await api.startQuality(opts)
               : await api.startAI(opts);
       onStarted?.(job.id);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "启动失败");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "启动失败");
     } finally {
       setLoading(null);
     }
   }
 
   return (
-    <div className="space-y-2">
-      <div className={`flex flex-wrap gap-2 ${compact ? "" : ""}`}>
-        <Button onClick={() => run("full")} disabled={!!loading} variant="amber">
-          {loading === "full" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Sparkles className="h-4 w-4" />
-          )}
-          一键全流程
-        </Button>
-        <Button onClick={() => run("fetch")} disabled={!!loading} variant="secondary">
-          {loading === "fetch" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Play className="h-4 w-4" />
-          )}
-          采集
-        </Button>
-        <Button onClick={() => run("quality")} disabled={!!loading} variant="outline">
-          {loading === "quality" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Zap className="h-4 w-4" />
-          )}
-          智能测速
-        </Button>
-        <Button onClick={() => run("ai")} disabled={!!loading} variant="ghost">
-          {loading === "ai" ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Radar className="h-4 w-4" />
-          )}
-          AI 探测
-        </Button>
+    <div className={className}>
+      <div className="flex flex-wrap gap-2">
+        {actions.map(({ kind, label, icon: Icon, variant }) => (
+          <Button
+            key={kind}
+            variant={variant}
+            onClick={() => run(kind)}
+            disabled={loading !== null}
+          >
+            {loading === kind ? <Loader2 className="size-4 animate-spin" /> : <Icon className="size-4" />}
+            {label}
+          </Button>
+        ))}
       </div>
-      {error && <p className="text-xs text-rose-400">{error}</p>}
+      {error && (
+        <Alert variant="danger" className="mt-3">
+          <AlertTriangle />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
     </div>
   );
 }

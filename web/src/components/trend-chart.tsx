@@ -1,97 +1,124 @@
 import type { DailyMetric } from "@/lib/api";
 
-function points(values: number[], width: number, height: number, top = 12, bottom = 24) {
-  if (values.length === 0) return "";
+const WIDTH = 720;
+const HEIGHT = 210;
+const TOP = 12;
+const BOTTOM = 26;
+
+type Scale = (index: number, value: number) => [number, number];
+
+function makeScale(values: number[]): Scale {
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min || 1;
-  const usable = height - top - bottom;
+  const usable = HEIGHT - TOP - BOTTOM;
+  return (index, value) => [
+    values.length === 1 ? WIDTH / 2 : (index / (values.length - 1)) * WIDTH,
+    TOP + (1 - (value - min) / span) * usable,
+  ];
+}
+
+/**
+ * Step path rather than a smoothed polyline: each sample holds its value until
+ * the next one, which keeps the chart consistent with the squared-off UI.
+ */
+function stepPath(values: number[], scale: Scale) {
   return values
     .map((value, index) => {
-      const x = values.length === 1 ? width / 2 : (index / (values.length - 1)) * width;
-      const y = top + (1 - (value - min) / span) * usable;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
+      const [x, y] = scale(index, value);
+      if (index === 0) return `M ${x.toFixed(1)} ${y.toFixed(1)}`;
+      const [prevX] = scale(index - 1, values[index - 1]);
+      const midX = (prevX + x) / 2;
+      return `L ${midX.toFixed(1)} ${y.toFixed(1)} L ${x.toFixed(1)} ${y.toFixed(1)}`;
     })
     .join(" ");
 }
 
 export function TrendChart({ data }: { data: DailyMetric[] }) {
-  const width = 720;
-  const height = 210;
-  const scores = data.map((row) => row.avg_score);
-  const latencies = data.map((row) => row.p95_latency_ms);
-  const scorePoints = points(scores, width, height);
-  const latencyPoints = points(latencies, width, height);
-
   if (data.length === 0) {
     return (
-      <div className="flex h-52 items-center justify-center rounded-lg border border-dashed border-slate-800 text-sm text-slate-600">
+      <div className="flex h-52 items-center justify-center border border-dashed border-border text-sm text-muted-foreground">
         完成一次质量任务后生成趋势
       </div>
     );
   }
 
+  const scores = data.map((row) => row.avg_score);
+  const latencies = data.map((row) => row.p95_latency_ms);
+  const scoreScale = makeScale(scores);
+  const latencyScale = makeScale(latencies);
+  const scorePath = stepPath(scores, scoreScale);
+  const areaPath = `${scorePath} L ${WIDTH} ${HEIGHT - BOTTOM} L 0 ${HEIGHT - BOTTOM} Z`;
+  const labelEvery = Math.ceil(data.length / 5);
+
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-4 font-mono text-[10px] uppercase tracking-widest">
-        <span className="flex items-center gap-2 text-cyan-300">
-          <i className="h-0.5 w-5 bg-cyan-400" /> 平均评分
+      <div className="flex flex-wrap gap-5 font-mono text-[10px] uppercase tracking-[0.16em]">
+        <span className="flex items-center gap-2 text-primary">
+          <span className="h-0.5 w-5 bg-primary" /> 平均评分
         </span>
-        <span className="flex items-center gap-2 text-amber-300">
-          <i className="h-0.5 w-5 bg-amber-400" /> P95 延迟
+        <span className="flex items-center gap-2 text-accent">
+          <span className="h-0.5 w-5 border-t-2 border-dashed border-accent" /> P95 延迟
         </span>
       </div>
       <svg
-        viewBox={`0 0 ${width} ${height}`}
+        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         role="img"
         aria-label="近三十日平均评分与 P95 延迟趋势"
         className="h-52 w-full overflow-visible"
+        preserveAspectRatio="none"
       >
         <defs>
-          <linearGradient id="score-area" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#22d3ee" stopOpacity=".26" />
-            <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
+          <linearGradient id="trend-score-area" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--primary)" stopOpacity=".22" />
+            <stop offset="100%" stopColor="var(--primary)" stopOpacity="0" />
           </linearGradient>
         </defs>
-        {[42, 84, 126, 168].map((y) => (
-          <line key={y} x1="0" x2={width} y1={y} y2={y} stroke="#1e293b" strokeDasharray="4 8" />
+
+        {[TOP, 60, 105, 150, HEIGHT - BOTTOM].map((y) => (
+          <line
+            key={y}
+            x1="0"
+            x2={WIDTH}
+            y1={y}
+            y2={y}
+            stroke="var(--border)"
+            strokeWidth="1"
+            shapeRendering="crispEdges"
+          />
         ))}
-        <polyline
-          points={`0,186 ${scorePoints} ${width},186`}
-          fill="url(#score-area)"
-          stroke="none"
-        />
-        <polyline
-          points={scorePoints}
+
+        <path d={areaPath} fill="url(#trend-score-area)" stroke="none" />
+        <path
+          d={scorePath}
           fill="none"
-          stroke="#22d3ee"
-          strokeWidth="3"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-        <polyline
-          points={latencyPoints}
-          fill="none"
-          stroke="#fbbf24"
+          stroke="var(--primary)"
           strokeWidth="2"
-          strokeDasharray="7 6"
-          strokeLinejoin="round"
-          strokeLinecap="round"
+          strokeLinejoin="miter"
+          strokeLinecap="butt"
         />
+        <path
+          d={stepPath(latencies, latencyScale)}
+          fill="none"
+          stroke="var(--accent)"
+          strokeWidth="1.5"
+          strokeDasharray="6 5"
+          strokeLinejoin="miter"
+          strokeLinecap="butt"
+        />
+
         {data.map((row, index) => {
-          if (index !== 0 && index !== data.length - 1 && index % Math.ceil(data.length / 5) !== 0) {
-            return null;
-          }
-          const x = data.length === 1 ? width / 2 : (index / (data.length - 1)) * width;
+          if (index !== 0 && index !== data.length - 1 && index % labelEvery !== 0) return null;
+          const [x] = scoreScale(index, row.avg_score);
           return (
             <text
               key={`${row.day}-${index}`}
               x={x}
-              y="205"
+              y={HEIGHT - 8}
               textAnchor={index === 0 ? "start" : index === data.length - 1 ? "end" : "middle"}
-              fill="#64748b"
+              fill="var(--muted-foreground)"
               fontSize="10"
-              fontFamily="monospace"
+              fontFamily="var(--font-mono-face), monospace"
             >
               {row.day.slice(5)}
             </text>

@@ -1,18 +1,31 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Copy, Download, FileJson, Link2, Radio } from "lucide-react";
+import { AlertTriangle, Check, Copy, Download, FileJson, Link2, Radio } from "lucide-react";
 import { api, exportBase64Url, exportRawUrl, getAdminToken, type Pool } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Field } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+/** Radix Select reserves the empty string, so "all" stands in for "no filter". */
+const ALL = "all";
+const unset = (value: string) => (value === ALL ? "" : value);
 
 export default function ExportPage() {
   const [limit, setLimit] = useState("300");
   const [minScore, setMinScore] = useState("70");
-  const [ai, setAi] = useState("");
+  const [ai, setAi] = useState(ALL);
   const [origin] = useState(() => (typeof window === "undefined" ? "" : window.location.origin));
   const [pub, setPub] = useState<{
     enabled?: boolean;
@@ -45,7 +58,8 @@ export default function ExportPage() {
     alive: "1",
     hq: Number(minScore) >= 70 ? "1" : "0",
   };
-  if (ai) params.ai = ai;
+  const aiFilter = unset(ai);
+  if (aiFilter) params.ai = aiFilter;
 
   const raw = exportRawUrl(params);
   const b64 = exportBase64Url(params);
@@ -101,11 +115,11 @@ export default function ExportPage() {
         description="按用途分发独立智能池，或临时组合筛选条件导出。发布缓存支持 ETag、CDN 与对象存储快照。"
       />
 
-      <div className="reveal space-y-6 p-4 sm:p-6 lg:p-8">
-        <Card className="border-cyan-500/20">
+      <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
+        <Card className="border-primary/25">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Radio className="h-4 w-4 text-cyan-300" />
+              <Radio className="size-4 text-primary" />
               公开订阅端点
             </CardTitle>
             <CardDescription>
@@ -116,8 +130,10 @@ export default function ExportPage() {
           <CardContent className="space-y-3 text-sm">
             {(["base64", "clash", "raw", "index"] as const).map((k) => (
               <div key={k} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
-                <span className="w-16 shrink-0 font-mono text-xs uppercase text-slate-500">{k}</span>
-                <code className="min-w-0 flex-1 break-all rounded-lg bg-slate-950 px-3 py-2 text-xs text-cyan-100/90">
+                <span className="w-16 shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                  {k}
+                </span>
+                <code className="min-w-0 flex-1 break-all border border-border bg-popover px-3 py-2 font-mono text-xs text-primary/90">
                   {subLinks[k] || `${prefix}/${k === "index" ? "" : k}`}
                 </code>
                 <Button
@@ -126,12 +142,12 @@ export default function ExportPage() {
                   onClick={() => copy(subLinks[k], k)}
                   disabled={!subLinks[k]}
                 >
-                  <Copy className="h-3.5 w-3.5" />
+                  <Copy className="size-3.5" />
                   {copied === k ? "已复制" : "复制"}
                 </Button>
               </div>
             ))}
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-muted-foreground">
               筛选：score ≥ {pub?.min_score ?? 70} · 最多 {pub?.max_nodes ?? 500} · 仅存活
               {schedule?.enabled ? (
                 <> · 定时 {String(schedule.interval_min)} 分钟 / {String(schedule.job)}</>
@@ -140,7 +156,7 @@ export default function ExportPage() {
               )}
             </p>
             {pub?.token_set && !allowQueryToken && (
-              <p className="text-xs text-amber-300">
+              <p className="text-xs text-accent">
                 查询参数 Token 已关闭；客户端需发送 Authorization: Bearer TOKEN 或
                 X-Sub-Token。若客户端只支持 URL Token，请显式开启 allow_query_token。
               </p>
@@ -166,15 +182,28 @@ export default function ExportPage() {
                   const key = `${pool.key}:${format}`;
                   return (
                     <div key={format} className="flex items-center gap-2">
-                      <span className="w-12 font-mono text-[9px] uppercase text-slate-600">{format}</span>
-                      <code className="min-w-0 flex-1 truncate rounded bg-slate-950 px-2 py-1.5 text-[10px] text-slate-500">{url}</code>
-                      <Button size="sm" variant="ghost" onClick={() => copy(url, key)}>
-                        <Copy className="h-3.5 w-3.5" />{copied === key ? "OK" : ""}
+                      <span className="w-16 shrink-0 font-mono text-[10px] uppercase text-muted-foreground">
+                        {format}
+                      </span>
+                      <code className="min-w-0 flex-1 truncate border border-border bg-popover px-2 py-1.5 font-mono text-[10px] text-muted-foreground">
+                        {url}
+                      </code>
+                      <Button
+                        size="icon-sm"
+                        variant="ghost"
+                        aria-label={`复制 ${pool.title} ${format} 订阅链接`}
+                        onClick={() => copy(url, key)}
+                      >
+                        {copied === key ? (
+                          <Check className="size-3.5 text-success" />
+                        ) : (
+                          <Copy className="size-3.5" />
+                        )}
                       </Button>
                     </div>
                   );
                 })}
-                <p className="pt-2 font-mono text-[9px] text-slate-700">
+                <p className="pt-2 font-mono text-[10px] tabular-nums text-muted-foreground">
                   score ≥ {pool.min_score} · max {pool.max_nodes} · refresh {pool.refresh_sec}s
                 </p>
               </CardContent>
@@ -188,29 +217,31 @@ export default function ExportPage() {
             <CardDescription>走 /api/export/*，可带 AI 过滤</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-3">
-            <label className="space-y-1.5 text-sm">
-              <span className="text-slate-400">数量上限</span>
-              <Input value={limit} onChange={(e) => setLimit(e.target.value)} />
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="text-slate-400">最低分数</span>
-              <Input value={minScore} onChange={(e) => setMinScore(e.target.value)} />
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="text-slate-400">AI 过滤（可选）</span>
-              <select
-                className="flex h-10 w-full rounded-md border border-slate-700 bg-slate-950 px-3 text-sm"
-                value={ai}
-                onChange={(e) => setAi(e.target.value)}
-              >
-                <option value="">不限</option>
-                {["chatgpt", "gemini", "claude", "grok", "openai"].map((k) => (
-                  <option key={k} value={k}>
-                    {k}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <Field label="数量上限" htmlFor="export-limit">
+              <Input id="export-limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+            </Field>
+            <Field label="最低分数" htmlFor="export-min-score">
+              <Input
+                id="export-min-score"
+                value={minScore}
+                onChange={(e) => setMinScore(e.target.value)}
+              />
+            </Field>
+            <Field label="AI 过滤（可选）">
+              <Select value={ai} onValueChange={setAi}>
+                <SelectTrigger className="w-full" aria-label="AI 过滤">
+                  <SelectValue placeholder="不限" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL}>不限</SelectItem>
+                  {["chatgpt", "gemini", "claude", "grok", "openai"].map((k) => (
+                    <SelectItem key={k} value={k} className="font-mono">
+                      {k}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
           </CardContent>
         </Card>
 
@@ -218,17 +249,17 @@ export default function ExportPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Link2 className="h-4 w-4 text-cyan-300" />
+                <Link2 className="size-4 text-primary" />
                 原始 URI 列表
               </CardTitle>
               <CardDescription>每行一个节点链接</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <code className="block break-all rounded-lg bg-slate-950 p-3 text-xs text-slate-400">
+              <code className="block break-all border border-border bg-popover p-3 font-mono text-xs text-muted-foreground">
                 {raw}
               </code>
               <Button onClick={() => download(raw, "nodes.txt")}>
-                <Download className="h-4 w-4" />
+                <Download className="size-4" />
                 下载 nodes.txt
               </Button>
             </CardContent>
@@ -237,32 +268,37 @@ export default function ExportPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <FileJson className="h-4 w-4 text-amber-300" />
+                <FileJson className="size-4 text-accent" />
                 Base64 订阅
               </CardTitle>
               <CardDescription>客户端订阅导入</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <code className="block break-all rounded-lg bg-slate-950 p-3 text-xs text-slate-400">
+              <code className="block break-all border border-border bg-popover p-3 font-mono text-xs text-muted-foreground">
                 {b64}
               </code>
-              <Button onClick={() => download(b64, "nodes.base64.txt")} variant="amber">
-                <Download className="h-4 w-4" />
+              <Button onClick={() => download(b64, "nodes.base64.txt")} variant="accent">
+                <Download className="size-4" />
                 下载 base64
               </Button>
             </CardContent>
           </Card>
         </div>
-        {downloadError && <p className="text-sm text-rose-400">{downloadError}</p>}
+        {downloadError && (
+          <Alert variant="danger">
+            <AlertTriangle />
+            <AlertDescription>{downloadError}</AlertDescription>
+          </Alert>
+        )}
 
         <Card>
           <CardHeader>
             <CardTitle>磁盘导出（任务完成后）</CardTitle>
             <CardDescription>
-              写入 <code className="text-cyan-300">output/</code>，可用 Nginx 静态托管
+              写入 <code className="text-primary">output/</code>，可用 Nginx 静态托管
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-1 text-sm text-slate-400">
+          <CardContent className="space-y-1 text-sm text-muted-foreground">
             <p>· sub.txt / sub.base64 / clash.yaml（稳定文件名，适合远程拉取）</p>
             <p>· nodes-latest.txt / .base64.txt / .json / .clash.yaml</p>
             <p>· nodes-ai-friendly.txt（任一 AI 启发通过）</p>

@@ -9,7 +9,6 @@ import {
   Bot,
   Download,
   FileClock,
-  Gauge,
   KeyRound,
   LayoutDashboard,
   LogIn,
@@ -23,6 +22,9 @@ import {
   Users,
 } from "lucide-react";
 import { api, type SessionInfo } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 const groups = [
@@ -66,15 +68,17 @@ function NavItem({
   return (
     <Link
       href={href}
+      aria-current={active ? "page" : undefined}
       className={cn(
-        "group flex items-center gap-2.5 rounded-md border px-3 py-2 text-sm transition-all",
-        compact && "shrink-0 py-1.5 text-xs",
+        // active state is a solid inset rail on the left edge — no rounded pill
+        "group flex items-center gap-2.5 border-l-2 px-3 py-2 text-sm transition-colors",
+        compact && "shrink-0 border-l-0 border-b-2 px-2.5 py-1.5 text-xs",
         active
-          ? "border-cyan-500/25 bg-cyan-500/10 text-cyan-100 shadow-[inset_3px_0_0_#22d3ee]"
-          : "border-transparent text-slate-500 hover:border-slate-800 hover:bg-slate-900/80 hover:text-slate-200",
+          ? "border-primary bg-primary/10 text-primary"
+          : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
       )}
     >
-      <Icon className={cn("h-4 w-4", active ? "text-cyan-300" : "text-slate-600 group-hover:text-slate-400")} />
+      <Icon className={cn("size-4", active ? "text-primary" : "text-muted-foreground/70 group-hover:text-foreground")} />
       {label}
     </Link>
   );
@@ -94,31 +98,34 @@ export function Sidebar() {
 
   return (
     <>
-      <aside className="relative z-20 hidden w-64 shrink-0 flex-col border-r border-slate-800/80 bg-slate-950/85 backdrop-blur-xl md:flex">
-        <div className="border-b border-slate-800/80 px-5 py-5">
+      <aside className="relative z-20 hidden w-64 shrink-0 flex-col border-r border-border bg-card/90 backdrop-blur-xl md:flex">
+        <div className="border-b border-border px-5 py-5">
           <Link href="/" className="flex items-center gap-3">
-            <div className="relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-md border border-cyan-400/30 bg-cyan-400/10">
-              <Radio className="h-4 w-4 text-cyan-300" />
-              <span className="absolute inset-x-0 bottom-0 h-0.5 bg-amber-400" />
-            </div>
-            <div>
-              <div className="font-[family-name:var(--font-display)] text-sm font-semibold tracking-[0.08em] text-slate-50">
+            <span className="corner-ticks relative flex size-10 items-center justify-center border border-primary/40 bg-primary/10">
+              <Radio className="size-4 text-primary" />
+              <span className="absolute inset-x-0 bottom-0 h-0.5 bg-accent" />
+            </span>
+            <span className="block">
+              <span className="block font-display text-sm font-semibold tracking-[0.1em] text-foreground">
                 NODEHARVEST
-              </div>
-              <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-slate-600">
+              </span>
+              <span className="block font-mono text-[9px] uppercase tracking-[0.2em] text-muted-foreground">
                 Network operations
-              </div>
-            </div>
+              </span>
+            </span>
           </Link>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-5 overflow-y-auto p-3">
+        <nav className="flex flex-1 flex-col gap-5 overflow-y-auto py-4">
           {groups.map((group) => (
             <div key={group.label}>
-              <p className="mb-1.5 px-3 font-mono text-[9px] uppercase tracking-[0.22em] text-slate-700">
-                {group.label}
-              </p>
-              <div className="space-y-0.5">
+              <div className="mb-2 flex items-center gap-2 px-3">
+                <span className="font-mono text-[9px] uppercase tracking-[0.24em] text-muted-foreground">
+                  {group.label}
+                </span>
+                <Separator className="flex-1" />
+              </div>
+              <div>
                 {group.items.map((item) => (
                   <NavItem key={item.href} {...item} active={active(item.href)} />
                 ))}
@@ -127,54 +134,58 @@ export function Sidebar() {
           ))}
         </nav>
 
-        <div className="border-t border-slate-800/80 p-3">
+        <div className="border-t border-border p-3">
           {session?.authenticated ? (
-            <div className="rounded-lg border border-slate-800 bg-slate-900/55 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold text-slate-200">{session.principal.name}</p>
-                  <p className="mt-0.5 font-mono text-[9px] uppercase tracking-wider text-slate-600">
-                    {session.principal.tenant_id} · {session.principal.role}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  aria-label="退出登录"
-                  onClick={() => api.logout().then(() => window.location.assign("/login"))}
-                  className="rounded-md p-2 text-slate-600 transition-colors hover:bg-slate-800 hover:text-rose-300"
-                >
-                  <LogOut className="h-4 w-4" />
-                </button>
+            <div className="flex items-center justify-between gap-2 border border-border bg-muted/50 p-3">
+              <div className="min-w-0">
+                <p className="truncate text-xs font-semibold text-foreground">
+                  {session.principal.name}
+                </p>
+                <p className="mt-0.5 truncate font-mono text-[9px] uppercase tracking-wider text-muted-foreground/70">
+                  {session.principal.tenant_id} · {session.principal.role}
+                </p>
               </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="退出登录"
+                    onClick={() => api.logout().then(() => window.location.assign("/login"))}
+                    className="hover:text-destructive"
+                  >
+                    <LogOut className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">退出登录</TooltipContent>
+              </Tooltip>
             </div>
           ) : (
-            <Link
-              href="/login"
-              className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200"
-            >
-              <span className="flex items-center gap-2">
-                <LogIn className="h-4 w-4" /> 管理登录
-              </span>
-              <ShieldCheck className="h-4 w-4 text-amber-400/60" />
-            </Link>
+            <Button variant="outline" asChild className="w-full justify-between border-accent/40 text-accent hover:border-accent hover:bg-accent/10">
+              <Link href="/login">
+                <span className="flex items-center gap-2">
+                  <LogIn className="size-4" /> 管理登录
+                </span>
+                <ShieldCheck className="size-4 opacity-60" />
+              </Link>
+            </Button>
           )}
-          <div className="mt-3 flex items-center gap-2 px-1 font-mono text-[9px] uppercase tracking-wider text-slate-700">
-            <Gauge className="h-3 w-3" />
+          <p className="mt-3 px-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-foreground">
             Quality first · trace everything
-          </div>
+          </p>
         </div>
       </aside>
 
-      <div className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/95 px-3 py-2 backdrop-blur-xl md:hidden">
-        <div className="mb-2 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 text-xs font-semibold tracking-wider text-slate-100">
-            <Radio className="h-4 w-4 text-cyan-300" /> NODEHARVEST
+      <div className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur-xl md:hidden">
+        <div className="flex items-center justify-between px-3 py-2.5">
+          <Link href="/" className="flex items-center gap-2 font-display text-xs font-semibold tracking-[0.1em] text-foreground">
+            <Radio className="size-4 text-primary" /> NODEHARVEST
           </Link>
-          <Link href="/login" aria-label="管理登录" className="text-slate-500">
-            <ShieldCheck className="h-4 w-4" />
+          <Link href="/login" aria-label="管理登录" className="text-muted-foreground">
+            <ShieldCheck className="size-4" />
           </Link>
         </div>
-        <nav className="flex gap-1 overflow-x-auto pb-1">
+        <nav className="flex gap-1 overflow-x-auto border-t border-border px-2">
           {groups.flatMap((group) =>
             group.items.map((item) => (
               <NavItem key={item.href} {...item} active={active(item.href)} compact />

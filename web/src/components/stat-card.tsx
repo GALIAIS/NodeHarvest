@@ -1,42 +1,57 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
+type Accent = "primary" | "accent" | "success" | "destructive";
+
+const rail: Record<Accent, string> = {
+  primary: "bg-primary",
+  accent: "bg-accent",
+  success: "bg-success",
+  destructive: "bg-destructive",
+};
+
+const value: Record<Accent, string> = {
+  primary: "text-primary",
+  accent: "text-accent",
+  success: "text-success",
+  destructive: "text-destructive",
+};
+
 export function StatCard({
   label,
-  value,
+  value: metric,
   hint,
-  accent = "cyan",
+  accent = "primary",
+  icon: Icon,
+  className,
 }: {
   label: string;
   value: string | number;
   hint?: string;
-  accent?: "cyan" | "amber" | "emerald" | "rose";
+  accent?: Accent;
+  icon?: React.ComponentType<{ className?: string }>;
+  className?: string;
 }) {
-  const ring = {
-    cyan: "from-cyan-500/20 to-transparent",
-    amber: "from-amber-400/20 to-transparent",
-    emerald: "from-emerald-400/20 to-transparent",
-    rose: "from-rose-400/20 to-transparent",
-  }[accent];
-
-  const valueColor = {
-    cyan: "text-cyan-200",
-    amber: "text-amber-200",
-    emerald: "text-emerald-200",
-    rose: "text-rose-200",
-  }[accent];
-
   return (
-    <Card className="relative overflow-hidden">
-      <div className={cn("absolute inset-0 bg-gradient-to-br opacity-80", ring)} />
-      <CardContent className="relative p-5">
-        <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
-          {label}
+    <Card className={cn("relative overflow-hidden", className)}>
+      {/* the metric's identity lives in a solid top rail rather than a gradient wash */}
+      <span className={cn("absolute inset-x-0 top-0 h-0.5", rail[accent])} />
+      <CardContent className="px-4 pt-4 pb-4">
+        <div className="flex items-start justify-between gap-3">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            {label}
+          </p>
+          {Icon && <Icon className={cn("size-4 shrink-0 opacity-70", value[accent])} />}
         </div>
-        <div className={cn("mt-2 font-[family-name:var(--font-display)] text-3xl font-semibold tabular-nums", valueColor)}>
-          {value}
-        </div>
-        {hint && <div className="mt-1 text-xs text-slate-500">{hint}</div>}
+        <p
+          className={cn(
+            "mt-2 font-display text-3xl leading-none font-semibold tabular-nums",
+            value[accent],
+          )}
+        >
+          {metric}
+        </p>
+        {hint && <p className="mt-2 truncate text-xs text-muted-foreground">{hint}</p>}
       </CardContent>
     </Card>
   );

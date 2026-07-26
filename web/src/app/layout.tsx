@@ -4,19 +4,19 @@ import { Shell } from "@/components/layout/shell";
 import "./globals.css";
 
 const display = Sora({
-  variable: "--font-display",
+  variable: "--font-display-face",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
 });
 
 const body = Source_Sans_3({
-  variable: "--font-body",
+  variable: "--font-body-face",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
 });
 
 const mono = IBM_Plex_Mono({
-  variable: "--font-mono",
+  variable: "--font-mono-face",
   subsets: ["latin"],
   weight: ["400", "500"],
 });
@@ -36,7 +36,7 @@ export default function RootLayout({
       lang="zh-CN"
       className={`${display.variable} ${body.variable} ${mono.variable} h-full antialiased`}
     >
-      <body className="min-h-full">
+      <body className="min-h-full bg-background text-foreground">
         <Shell>{children}</Shell>
       </body>
     </html>

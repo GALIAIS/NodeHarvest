@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bot, Info } from "lucide-react";
+import { AlertTriangle, Bot, Info } from "lucide-react";
 import {
   api,
   type AIProbeResult,
@@ -11,8 +11,18 @@ import {
 } from "@/lib/api";
 import { JobActions } from "@/components/job-actions";
 import { PageHeader } from "@/components/page-header";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableEmpty,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { formatMs } from "@/lib/utils";
 
 export default function AIPage() {
@@ -57,22 +67,24 @@ export default function AIPage() {
         description="ChatGPT、Gemini、Claude、Grok 等目标的本机边缘状态与节点代理可达矩阵。"
       />
 
-      <div className="reveal space-y-6 p-4 sm:p-6 lg:p-8">
-        <Card className="border-amber-500/20 bg-amber-500/5">
-          <CardContent className="flex gap-3 p-4 text-sm text-amber-100/90">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
-            <div className="space-y-1">
-              <p>
-                <strong>真实代理测 AI</strong>：把节点导入 xray/sing-box 本地 SOCKS5，然后设置环境变量{" "}
-                <code className="rounded bg-slate-950 px-1">NODE_HARVEST_SOCKS5=127.0.0.1:1080</code>{" "}
-                或在任务 body 传 <code className="rounded bg-slate-950 px-1">socks5</code>。
-              </p>
-              <p className="text-amber-200/70">
-                无 SOCKS5 时使用<strong>启发模式</strong>：节点质量 + 本机到 AI 边缘连通性，用于筛选候选，不保证经节点可访问。
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
+        <Alert variant="warn" role="note">
+          <Info />
+          <AlertDescription>
+            <p>
+              <strong>真实代理测 AI</strong>：把节点导入 xray/sing-box 本地 SOCKS5，然后设置环境变量{" "}
+              <code className="border border-border bg-popover px-1 font-mono">
+                NODE_HARVEST_SOCKS5=127.0.0.1:1080
+              </code>{" "}
+              或在任务 body 传{" "}
+              <code className="border border-border bg-popover px-1 font-mono">socks5</code>。
+            </p>
+            <p className="opacity-70">
+              无 SOCKS5 时使用<strong>启发模式</strong>：节点质量 + 本机到 AI
+              边缘连通性，用于筛选候选，不保证经节点可访问。
+            </p>
+          </AlertDescription>
+        </Alert>
 
         <Card>
           <CardHeader>
@@ -85,12 +97,13 @@ export default function AIPage() {
         </Card>
 
         {err && (
-          <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
-            {err}
-          </div>
+          <Alert variant="danger">
+            <AlertTriangle />
+            <AlertDescription>{err}</AlertDescription>
+          </Alert>
         )}
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {targets.map((t) => {
             const host = hostAI[t.key];
             const pass = stats?.ai_pass_rate?.[t.key];
@@ -98,7 +111,7 @@ export default function AIPage() {
               <Card key={t.key}>
                 <CardHeader className="pb-2">
                   <CardTitle className="flex items-center gap-2 text-sm">
-                    <Bot className="h-4 w-4 text-cyan-300" />
+                    <Bot className="size-4 text-primary" />
                     {t.name}
                   </CardTitle>
                   <CardDescription className="truncate font-mono text-[10px]">
@@ -107,21 +120,21 @@ export default function AIPage() {
                 </CardHeader>
                 <CardContent className="space-y-2">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500">本机直连</span>
+                    <span className="text-muted-foreground">本机直连</span>
                     <Badge variant={host?.ok ? "success" : "danger"}>
                       {host ? (host.ok ? "OK" : "FAIL") : "未测"}
                     </Badge>
                   </div>
                   {host && (
-                    <div className="text-xs text-slate-500">
+                    <div className="font-mono text-xs text-muted-foreground">
                       {formatMs(host.latency_ms)}
                       {host.status_code ? ` · HTTP ${host.status_code}` : ""}
                       {host.error ? ` · ${host.error}` : ""}
                     </div>
                   )}
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-500">节点通过率</span>
-                    <span className="tabular-nums text-amber-200">
+                    <span className="text-muted-foreground">节点通过率</span>
+                    <span className="font-mono tabular-nums text-accent">
                       {pass != null ? `${Math.round(pass * 100)}%` : "—"}
                     </span>
                   </div>
@@ -136,51 +149,47 @@ export default function AIPage() {
             <CardTitle>节点 AI 矩阵（样本）</CardTitle>
             <CardDescription>已做过 AI 探测的存活节点</CardDescription>
           </CardHeader>
-          <CardContent className="p-0">
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>节点</th>
-                    <th>分数</th>
-                    {targets.map((t) => (
-                      <th key={t.key}>{t.key}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {nodes.slice(0, 40).map((n) => (
-                    <tr key={n.id}>
-                      <td className="max-w-[160px] truncate">{n.name}</td>
-                      <td className="tabular-nums text-amber-200">
-                        {n.score?.toFixed?.(1)}
-                      </td>
-                      {targets.map((t) => {
-                        const r = n.ai_access?.[t.key];
-                        return (
-                          <td key={t.key}>
-                            {r ? (
-                              <Badge variant={r.ok ? "success" : "secondary"}>
-                                {r.ok ? "✓" : "×"}
-                              </Badge>
-                            ) : (
-                              <span className="text-slate-600">·</span>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
+          <CardContent className="px-0 pb-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>节点</TableHead>
+                  <TableHead>分数</TableHead>
+                  {targets.map((t) => (
+                    <TableHead key={t.key}>{t.key}</TableHead>
                   ))}
-                  {nodes.length === 0 && (
-                    <tr>
-                      <td colSpan={2 + targets.length} className="py-10 text-center text-slate-500">
-                        暂无 AI 探测数据，请运行 AI 探测任务
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {nodes.slice(0, 40).map((n) => (
+                  <TableRow key={n.id}>
+                    <TableCell className="max-w-40 truncate">{n.name}</TableCell>
+                    <TableCell className="font-mono tabular-nums text-accent">
+                      {n.score?.toFixed?.(1)}
+                    </TableCell>
+                    {targets.map((t) => {
+                      const r = n.ai_access?.[t.key];
+                      return (
+                        <TableCell key={t.key}>
+                          {r ? (
+                            <Badge variant={r.ok ? "success" : "secondary"}>
+                              {r.ok ? "✓" : "×"}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">·</span>
+                          )}
+                        </TableCell>
+                      );
+                    })}
+                  </TableRow>
+                ))}
+                {nodes.length === 0 && (
+                  <TableEmpty colSpan={2 + targets.length} icon={Bot}>
+                    暂无 AI 探测数据，请运行 AI 探测任务
+                  </TableEmpty>
+                )}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       </div>

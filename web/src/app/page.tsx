@@ -7,8 +7,11 @@ import {
   ArrowRight,
   Clock3,
   Database,
+  Gauge,
+  Network,
   RefreshCw,
   ServerCog,
+  ShieldCheck,
   Waves,
 } from "lucide-react";
 import {
@@ -26,11 +29,37 @@ import { JobActions } from "@/components/job-actions";
 import { PageHeader } from "@/components/page-header";
 import { StatCard } from "@/components/stat-card";
 import { TrendChart } from "@/components/trend-chart";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardEmpty,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { cn, formatDuration, formatMs, formatTime, gradeColor } from "@/lib/utils";
+import { Separator } from "@/components/ui/separator";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableEmpty,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  cn,
+  formatDuration,
+  formatMs,
+  formatTime,
+  gradeColor,
+  healthVariant,
+} from "@/lib/utils";
 
 type Schedule = {
   enabled?: boolean;
@@ -40,6 +69,8 @@ type Schedule = {
   job?: string;
   last_error?: string;
 };
+
+const GRADES = ["S", "A", "B", "C", "D", "F"] as const;
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -111,87 +142,122 @@ export default function DashboardPage() {
         description="从采集源、任务队列到高质量订阅池，一屏掌握当前节点供给与系统风险。"
         actions={
           <>
-            <Badge variant={health?.ok ? "success" : "danger"}>
-              <span className={cn("mr-1.5 h-1.5 w-1.5 rounded-full", health?.ok ? "bg-emerald-300" : "bg-rose-300")} />
+            <Badge variant={health?.ok ? "success" : "danger"} className="h-8 px-2.5">
+              <span className={cn("size-1.5", health?.ok ? "bg-success" : "bg-destructive")} />
               {health?.ok ? "系统在线" : "系统异常"}
             </Badge>
             <Button variant="secondary" size="sm" onClick={load}>
-              <RefreshCw className="h-3.5 w-3.5" /> 刷新
+              <RefreshCw className="size-3.5" /> 刷新
             </Button>
           </>
         }
       />
 
-      <div className="reveal space-y-5 p-4 sm:p-6 lg:p-8">
+      <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
         {err && (
-          <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
-            {err}
-          </div>
+          <Alert variant="danger">
+            <AlertTriangle />
+            <AlertDescription>{err}</AlertDescription>
+          </Alert>
         )}
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard label="全量节点" value={stats?.total_nodes ?? 0} hint={`启用源 ${stats?.sources_enabled ?? 0}`} accent="cyan" />
-          <StatCard label="可用节点" value={stats?.alive_nodes ?? 0} hint={`均延 ${formatMs(stats?.avg_latency_ms)}`} accent="emerald" />
-          <StatCard label="HQ 供给" value={stats?.high_quality ?? 0} hint={`订阅缓存 ${health?.publish_count ?? 0}`} accent="amber" />
+          <StatCard
+            label="全量节点"
+            value={stats?.total_nodes ?? 0}
+            hint={`启用源 ${stats?.sources_enabled ?? 0}`}
+            accent="primary"
+            icon={Network}
+          />
+          <StatCard
+            label="可用节点"
+            value={stats?.alive_nodes ?? 0}
+            hint={`均延 ${formatMs(stats?.avg_latency_ms)}`}
+            accent="success"
+            icon={Gauge}
+          />
+          <StatCard
+            label="HQ 供给"
+            value={stats?.high_quality ?? 0}
+            hint={`订阅缓存 ${health?.publish_count ?? 0}`}
+            accent="accent"
+            icon={ShieldCheck}
+          />
           <StatCard
             label="活跃告警"
             value={alerts.length}
-            hint={alerts.some((alert) => alert.severity === "critical") ? "存在关键异常" : "无关键异常"}
-            accent="rose"
+            hint={
+              alerts.some((alert) => alert.severity === "critical") ? "存在关键异常" : "无关键异常"
+            }
+            accent="destructive"
+            icon={AlertTriangle}
           />
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[1.45fr_.55fr]">
+        <div className="grid gap-3 xl:grid-cols-[1.45fr_.55fr]">
           <Card>
             <CardHeader className="flex-row items-start justify-between gap-4">
               <div>
                 <CardTitle className="flex items-center gap-2">
-                  <Waves className="h-4 w-4 text-cyan-300" /> 30 日质量脉冲
+                  <Waves className="size-4 text-primary" /> 30 日质量脉冲
                 </CardTitle>
                 <CardDescription>平均评分与 P95 延迟按日聚合，避免被单次尖峰误导</CardDescription>
               </div>
-              <Badge variant="secondary">{trends.reduce((sum, row) => sum + row.samples, 0)} samples</Badge>
+              <CardAction>
+                <Badge variant="secondary">
+                  {trends.reduce((sum, row) => sum + row.samples, 0)} samples
+                </Badge>
+              </CardAction>
             </CardHeader>
             <CardContent>
               <TrendChart data={trends} />
             </CardContent>
           </Card>
 
-          <Card className="overflow-hidden">
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Clock3 className="h-4 w-4 text-amber-300" /> 调度窗口
+                <Clock3 className="size-4 text-accent" /> 调度窗口
               </CardTitle>
               <CardDescription>Asia/Shanghai · {schedule.job || "未配置"} 流程</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-5">
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">Next execution</p>
-                <p className="mt-2 font-[family-name:var(--font-display)] text-3xl font-semibold text-amber-200">
+            <CardContent className="space-y-4">
+              <div className="corner-ticks relative border border-border bg-muted/40 p-4">
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Next execution
+                </p>
+                <p className="mt-2 font-display text-3xl leading-none font-semibold tabular-nums text-accent">
                   {schedule.enabled ? formatDuration(nextRunSeconds) : "已停用"}
                 </p>
-                <p className="mt-1 text-xs text-slate-600">{formatTime(schedule.next_run_at)}</p>
+                <p className="mt-2 font-mono text-[10px] text-muted-foreground">
+                  {formatTime(schedule.next_run_at)}
+                </p>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-md border border-slate-800 bg-slate-950/60 p-3">
-                  <Database className="mb-2 h-4 w-4 text-cyan-400" />
-                  <p className="text-slate-600">数据库</p>
-                  <p className="mt-1 text-slate-300">{health?.database.driver || "—"} · {health?.database.ok ? "OK" : "FAIL"}</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="border border-border bg-muted/40 p-3">
+                  <Database className="mb-2 size-4 text-primary" />
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">数据库</p>
+                  <p className="mt-1 text-xs text-foreground">
+                    {health?.database.driver || "—"} · {health?.database.ok ? "OK" : "FAIL"}
+                  </p>
                 </div>
-                <div className="rounded-md border border-slate-800 bg-slate-950/60 p-3">
-                  <ServerCog className="mb-2 h-4 w-4 text-amber-400" />
-                  <p className="text-slate-600">Redis</p>
-                  <p className="mt-1 text-slate-300">{health?.redis.enabled ? (health.redis.ok ? "OK" : "FAIL") : "OFF"}</p>
+                <div className="border border-border bg-muted/40 p-3">
+                  <ServerCog className="mb-2 size-4 text-accent" />
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Redis</p>
+                  <p className="mt-1 text-xs text-foreground">
+                    {health?.redis.enabled ? (health.redis.ok ? "OK" : "FAIL") : "OFF"}
+                  </p>
                 </div>
               </div>
-              <p className="border-t border-slate-800 pt-3 text-xs text-slate-500">
-                最近运行：{formatTime(schedule.last_run_at)}
+              <Separator />
+              <p className="font-mono text-[10px] text-muted-foreground">
+                最近运行 {formatTime(schedule.last_run_at)}
               </p>
             </CardContent>
           </Card>
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <div className="grid gap-3 xl:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle>任务控制</CardTitle>
@@ -200,23 +266,31 @@ export default function DashboardPage() {
             <CardContent className="space-y-4">
               <JobActions onStarted={load} />
               {activeJob ? (
-                <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-4">
+                <div className="border border-primary/30 bg-primary/5 p-4">
                   <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                    <span className="truncate text-cyan-200">{activeJob.type} · {activeJob.message}</span>
-                    <span className="font-mono text-xs text-slate-400">{Math.round(activeJob.progress)}%</span>
+                    <span className="truncate text-primary">
+                      {activeJob.type} · {activeJob.message}
+                    </span>
+                    <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                      {Math.round(activeJob.progress)}%
+                    </span>
                   </div>
                   <Progress value={activeJob.progress} />
                 </div>
               ) : (
-                <p className="rounded-lg border border-dashed border-slate-800 px-4 py-5 text-center text-xs text-slate-600">
+                <p className="border border-dashed border-border px-4 py-5 text-center text-xs text-muted-foreground">
                   当前没有运行中的任务
                 </p>
               )}
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-                {["S", "A", "B", "C", "D", "F"].map((grade) => (
-                  <div key={grade} className={cn("rounded-md border p-2 text-center", gradeColor(grade))}>
-                    <span className="text-[10px] opacity-70">{grade}</span>
-                    <p className="font-mono text-base">{stats?.by_grade?.[grade] ?? 0}</p>
+                {GRADES.map((grade) => (
+                  <div key={grade} className={cn("border p-2 text-center", gradeColor(grade))}>
+                    <span className="font-mono text-[10px] uppercase tracking-wider opacity-70">
+                      {grade}
+                    </span>
+                    <p className="font-mono text-base tabular-nums">
+                      {stats?.by_grade?.[grade] ?? 0}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -229,80 +303,112 @@ export default function DashboardPage() {
                 <CardTitle>HQ 国家分布</CardTitle>
                 <CardDescription>高质量池中节点最多的八个国家或地区</CardDescription>
               </div>
-              <Link href="/nodes?hq=1" className="flex items-center gap-1 text-xs text-cyan-300 hover:text-cyan-200">
-                查看节点 <ArrowRight className="h-3 w-3" />
-              </Link>
+              <CardAction>
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href="/nodes?hq=1">
+                    查看节点 <ArrowRight className="size-3" />
+                  </Link>
+                </Button>
+              </CardAction>
             </CardHeader>
             <CardContent className="space-y-2.5">
               {countries.map((country) => (
-                <div key={country.code} className="grid grid-cols-[2.4rem_1fr_3rem] items-center gap-3 text-xs">
-                  <span className="font-mono text-slate-500">{country.flag || country.code}</span>
+                <div
+                  key={country.code}
+                  className="grid grid-cols-[2.2rem_1fr_3rem] items-center gap-3 text-xs"
+                >
+                  <span className="font-mono text-muted-foreground">
+                    {country.flag || country.code}
+                  </span>
                   <div>
-                    <div className="mb-1 flex justify-between text-slate-400">
-                      <span>{country.name || country.code}</span>
-                    </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+                    <p className="mb-1 text-muted-foreground">{country.name || country.code}</p>
+                    <div className="h-1.5 border border-border bg-muted">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-cyan-300"
-                        style={{ width: `${Math.max(4, (country.count / maxCountry) * 100)}%` }}
+                        className="h-full bg-primary"
+                        style={{ width: `${Math.max(3, (country.count / maxCountry) * 100)}%` }}
                       />
                     </div>
                   </div>
-                  <span className="text-right font-mono text-slate-300">{country.count}</span>
+                  <span className="text-right font-mono tabular-nums text-foreground">
+                    {country.count}
+                  </span>
                 </div>
               ))}
-              {countries.length === 0 && <p className="py-12 text-center text-sm text-slate-600">暂无国家数据</p>}
+              {countries.length === 0 && <CardEmpty>暂无国家数据</CardEmpty>}
             </CardContent>
           </Card>
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[1.1fr_.9fr]">
+        <div className="grid gap-3 xl:grid-cols-[1.1fr_.9fr]">
           <Card>
             <CardHeader className="flex-row items-start justify-between">
               <div>
                 <CardTitle>源健康雷达</CardTitle>
                 <CardDescription>按健康分从低到高优先处理风险源</CardDescription>
               </div>
-              <Link href="/sources" className="text-xs text-cyan-300">治理全部</Link>
+              <CardAction>
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href="/sources">治理全部</Link>
+                </Button>
+              </CardAction>
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent className="space-y-0">
               {sources.map((source) => (
-                <div key={source.name} className="grid grid-cols-[minmax(0,1fr)_4rem_5rem] items-center gap-3 border-b border-slate-800/60 py-2 last:border-0">
+                <div
+                  key={source.name}
+                  className="grid grid-cols-[minmax(0,1fr)_3.5rem_5rem] items-center gap-3 border-b border-border/60 py-2.5 last:border-0"
+                >
                   <div className="min-w-0">
-                    <p className="truncate text-sm text-slate-300">{source.name}</p>
-                    <p className="font-mono text-[10px] text-slate-600">HQ {source.contribution_hq} / {source.contribution_total}</p>
+                    <p className="truncate text-sm text-foreground">{source.name}</p>
+                    <p className="font-mono text-[10px] text-muted-foreground">
+                      HQ {source.contribution_hq} / {source.contribution_total}
+                    </p>
                   </div>
-                  <Badge variant={source.health_score >= 80 ? "success" : source.health_score >= 50 ? "warn" : "danger"}>
+                  <Badge variant={healthVariant(source.health_score)}>
                     {source.health_score.toFixed(0)}
                   </Badge>
-                  <span className="text-right text-xs text-slate-600">{formatMs(source.latency_ms)}</span>
+                  <span className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+                    {formatMs(source.latency_ms)}
+                  </span>
                 </div>
               ))}
+              {sources.length === 0 && <CardEmpty>暂无采集源</CardEmpty>}
             </CardContent>
           </Card>
 
-          <Card className={alerts.length ? "border-rose-500/20" : ""}>
+          <Card className={alerts.length ? "border-destructive/30" : undefined}>
             <CardHeader className="flex-row items-start justify-between">
               <div>
                 <CardTitle className="flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 text-rose-300" /> 异常队列
+                  <AlertTriangle className="size-4 text-destructive" /> 异常队列
                 </CardTitle>
                 <CardDescription>主动异常检测与值班处理入口</CardDescription>
               </div>
-              <Link href="/alerts" className="text-xs text-cyan-300">打开告警台</Link>
+              <CardAction>
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href="/alerts">打开告警台</Link>
+                </Button>
+              </CardAction>
             </CardHeader>
             <CardContent className="space-y-2">
               {alerts.slice(0, 4).map((alert) => (
-                <div key={alert.id} className="rounded-md border border-slate-800 bg-slate-950/50 p-3">
+                <div
+                  key={alert.id}
+                  className="border border-border border-l-2 border-l-destructive/70 bg-muted/40 p-3"
+                >
                   <div className="flex items-center justify-between gap-3">
-                    <p className="truncate text-sm text-slate-300">{alert.message}</p>
-                    <Badge variant={alert.severity === "critical" ? "danger" : "warn"}>{alert.severity}</Badge>
+                    <p className="truncate text-sm text-foreground">{alert.message}</p>
+                    <Badge variant={alert.severity === "critical" ? "danger" : "warn"}>
+                      {alert.severity}
+                    </Badge>
                   </div>
-                  <p className="mt-1 font-mono text-[10px] text-slate-600">{formatTime(alert.created_at)}</p>
+                  <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+                    {formatTime(alert.created_at)}
+                  </p>
                 </div>
               ))}
               {alerts.length === 0 && (
-                <p className="py-10 text-center text-sm text-emerald-400/70">当前没有活跃异常</p>
+                <CardEmpty className="text-success/80">当前没有活跃异常</CardEmpty>
               )}
             </CardContent>
           </Card>
@@ -314,29 +420,65 @@ export default function DashboardPage() {
               <CardTitle>当前高分节点</CardTitle>
               <CardDescription>可用、HQ 且最近进入发布池的节点样本</CardDescription>
             </div>
-            <Link href="/nodes?hq=1" className="flex items-center gap-1 text-xs text-cyan-300">
-              全部 <ArrowRight className="h-3 w-3" />
-            </Link>
+            <CardAction>
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/nodes?hq=1">
+                  全部 <ArrowRight className="size-3" />
+                </Link>
+              </Button>
+            </CardAction>
           </CardHeader>
-          <CardContent className="p-0">
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>等级</th><th>节点</th><th>国家</th><th>协议</th><th>评分</th><th>延迟</th><th>来源</th></tr></thead>
-                <tbody>
-                  {top.map((node) => (
-                    <tr key={node.id}>
-                      <td><span className={cn("inline-flex h-6 w-6 items-center justify-center rounded border text-xs", gradeColor(node.grade))}>{node.grade || "—"}</span></td>
-                      <td className="max-w-[240px] truncate text-slate-200">{node.name}</td>
-                      <td className="font-mono text-xs text-slate-500">{node.country || "ZZ"}</td>
-                      <td><Badge variant="secondary">{node.protocol}</Badge></td>
-                      <td className="font-mono text-amber-200">{node.score.toFixed(1)}</td>
-                      <td className="font-mono text-xs">{formatMs(node.latency_ms)}</td>
-                      <td className="max-w-[180px] truncate text-xs text-slate-600">{node.source}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          <CardContent className="px-0 pb-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>等级</TableHead>
+                  <TableHead>节点</TableHead>
+                  <TableHead>国家</TableHead>
+                  <TableHead>协议</TableHead>
+                  <TableHead>评分</TableHead>
+                  <TableHead>延迟</TableHead>
+                  <TableHead>来源</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {top.map((node) => (
+                  <TableRow key={node.id}>
+                    <TableCell>
+                      <span
+                        className={cn(
+                          "inline-flex size-6 items-center justify-center border font-mono text-xs font-semibold",
+                          gradeColor(node.grade),
+                        )}
+                      >
+                        {node.grade || "—"}
+                      </span>
+                    </TableCell>
+                    <TableCell className="max-w-60 truncate text-foreground">{node.name}</TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {node.country || "ZZ"}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{node.protocol}</Badge>
+                    </TableCell>
+                    <TableCell className="font-mono tabular-nums text-accent">
+                      {node.score.toFixed(1)}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs tabular-nums">
+                      {formatMs(node.latency_ms)}
+                    </TableCell>
+                    <TableCell className="max-w-44 truncate text-xs text-muted-foreground">
+                      {node.source}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {top.length === 0 && (
+                  <TableEmpty colSpan={7} icon={Network}>
+                    暂无高质量节点，先运行一次全流程任务
+                  </TableEmpty>
+                )}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       </div>

@@ -1,12 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Ban, ExternalLink, Play, Power, RefreshCw, ShieldAlert } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  Ban,
+  ExternalLink,
+  Play,
+  Power,
+  RefreshCw,
+  ShieldAlert,
+} from "lucide-react";
 import { api, type Source } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardEmpty } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn, formatBytes, formatMs, formatPercent, formatTime } from "@/lib/utils";
 
 export default function SourcesPage() {
@@ -55,19 +72,19 @@ export default function SourcesPage() {
         description="在线控制、单源探测、自动冷却与 HQ 贡献排名。高风险源会在连续失败后自动退出调度。"
         actions={
           <>
-            <select
-              aria-label="源排序"
-              className="h-8 px-3 text-xs"
-              value={sort}
-              onChange={(event) => setSort(event.target.value)}
-            >
-              <option value="priority">按优先级</option>
-              <option value="health">按健康分</option>
-              <option value="contribution">按 HQ 贡献</option>
-              <option value="success">按成功率</option>
-            </select>
+            <Select value={sort} onValueChange={setSort}>
+              <SelectTrigger size="sm" className="w-36" aria-label="源排序">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="priority">按优先级</SelectItem>
+                <SelectItem value="health">按健康分</SelectItem>
+                <SelectItem value="contribution">按 HQ 贡献</SelectItem>
+                <SelectItem value="success">按成功率</SelectItem>
+              </SelectContent>
+            </Select>
             <Button variant="secondary" size="sm" onClick={load}>
-              <RefreshCw className="h-3.5 w-3.5" /> 刷新
+              <RefreshCw className="size-3.5" /> 刷新
             </Button>
           </>
         }
@@ -83,18 +100,21 @@ export default function SourcesPage() {
           ].map(([label, value, hint]) => (
             <Card key={label}>
               <CardContent className="p-4">
-                <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-slate-600">{label}</p>
-                <p className="mt-1 font-[family-name:var(--font-display)] text-2xl text-slate-100">{value}</p>
-                <p className="text-[10px] text-slate-700">{hint}</p>
+                <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                  {label}
+                </p>
+                <p className="mt-1 font-display text-2xl tabular-nums text-foreground">{value}</p>
+                <p className="text-[10px] text-muted-foreground">{hint}</p>
               </CardContent>
             </Card>
           ))}
         </div>
 
         {err && (
-          <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
-            {err}
-          </div>
+          <Alert variant="danger">
+            <AlertTriangle />
+            <AlertDescription>{err}</AlertDescription>
+          </Alert>
         )}
 
         <div className="grid gap-3">
@@ -108,62 +128,72 @@ export default function SourcesPage() {
                 className={cn(
                   "overflow-hidden",
                   !active && "opacity-75",
-                  source.health_score < 50 && "border-rose-500/25",
+                  source.health_score < 50 && "border-l-2 border-l-destructive/70",
                 )}
                 style={{ animationDelay: `${Math.min(index, 10) * 25}ms` }}
               >
                 <CardContent className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,.8fr)_auto] lg:items-center">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-[10px] text-slate-700">
+                      <span className="font-mono text-[10px] text-muted-foreground">
                         #{String(index + 1).padStart(3, "0")}
                       </span>
-                      <h2 className="truncate text-sm font-semibold text-slate-200">{source.name}</h2>
+                      <h2 className="truncate text-sm font-semibold text-foreground">{source.name}</h2>
                       <Badge variant={active ? "success" : "secondary"}>{active ? "ACTIVE" : "PAUSED"}</Badge>
                       <Badge variant="secondary">P{source.priority}</Badge>
                       {cooling && <Badge variant="warn">COOLDOWN</Badge>}
                       {source.manually_disabled && <Badge variant="danger">MANUAL</Badge>}
                     </div>
                     <div className="mt-2 flex items-center gap-2">
-                      <p className="truncate font-mono text-[10px] text-slate-600">{source.url}</p>
+                      <p className="truncate font-mono text-[10px] text-muted-foreground">{source.url}</p>
                       <a
                         href={source.url}
                         target="_blank"
                         rel="noreferrer"
                         aria-label={`打开 ${source.name}`}
-                        className="shrink-0 text-slate-700 hover:text-cyan-300"
+                        className="shrink-0 text-muted-foreground hover:text-primary"
                       >
-                        <ExternalLink className="h-3.5 w-3.5" />
+                        <ExternalLink className="size-3.5" />
                       </a>
                     </div>
                     {source.last_error && (
-                      <p className="mt-2 flex items-start gap-2 text-xs text-rose-400">
-                        <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <p className="mt-2 flex items-start gap-2 text-xs text-destructive">
+                        <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
                         <span className="line-clamp-2">{source.last_error}</span>
                       </p>
                     )}
                   </div>
 
                   <div className="grid grid-cols-3 gap-2">
-                    <div className="rounded-md border border-slate-800 bg-slate-950/55 p-2.5">
-                      <p className="text-[10px] text-slate-600">健康分</p>
-                      <p className={cn("mt-1 font-mono text-lg", source.health_score >= 80 ? "text-emerald-300" : source.health_score >= 50 ? "text-amber-300" : "text-rose-300")}>
+                    <div className="border border-border bg-muted/40 p-2.5">
+                      <p className="text-[10px] text-muted-foreground">健康分</p>
+                      <p
+                        className={cn(
+                          "mt-1 font-mono text-lg tabular-nums",
+                          source.health_score >= 80
+                            ? "text-success"
+                            : source.health_score >= 50
+                              ? "text-accent"
+                              : "text-destructive",
+                        )}
+                      >
                         {source.health_score.toFixed(0)}
                       </p>
                     </div>
-                    <div className="rounded-md border border-slate-800 bg-slate-950/55 p-2.5">
-                      <p className="text-[10px] text-slate-600">HQ / 总贡献</p>
-                      <p className="mt-1 font-mono text-sm text-cyan-200">
-                        {source.contribution_hq}<span className="text-slate-700">/{source.contribution_total}</span>
+                    <div className="border border-border bg-muted/40 p-2.5">
+                      <p className="text-[10px] text-muted-foreground">HQ / 总贡献</p>
+                      <p className="mt-1 font-mono text-sm tabular-nums text-primary">
+                        {source.contribution_hq}
+                        <span className="text-muted-foreground">/{source.contribution_total}</span>
                       </p>
                     </div>
-                    <div className="rounded-md border border-slate-800 bg-slate-950/55 p-2.5">
-                      <p className="text-[10px] text-slate-600">成功率</p>
-                      <p className="mt-1 font-mono text-sm text-slate-300">
+                    <div className="border border-border bg-muted/40 p-2.5">
+                      <p className="text-[10px] text-muted-foreground">成功率</p>
+                      <p className="mt-1 font-mono text-sm tabular-nums text-foreground">
                         {source.fetch_count ? formatPercent(source.success_rate) : "—"}
                       </p>
                     </div>
-                    <p className="col-span-3 font-mono text-[10px] text-slate-600">
+                    <p className="col-span-3 font-mono text-[10px] text-muted-foreground">
                       {formatMs(source.latency_ms)} · {formatBytes(source.bytes)} · HTTP {source.status_code || "—"} ·
                       成功 {formatTime(source.last_success_at)}
                     </p>
@@ -176,16 +206,16 @@ export default function SourcesPage() {
                       disabled={loading}
                       onClick={() => act(source, "probe")}
                     >
-                      <Activity className={cn("h-3.5 w-3.5", busy === `${source.name}:probe` && "animate-pulse")} />
+                      <Activity className={cn("size-3.5", busy === `${source.name}:probe` && "animate-pulse")} />
                       探测
                     </Button>
                     <Button
                       size="sm"
-                      variant={source.manually_disabled ? "secondary" : "danger"}
+                      variant={source.manually_disabled ? "secondary" : "destructive"}
                       disabled={loading}
                       onClick={() => act(source, source.manually_disabled ? "enable" : "disable")}
                     >
-                      {source.manually_disabled ? <Power className="h-3.5 w-3.5" /> : <Ban className="h-3.5 w-3.5" />}
+                      {source.manually_disabled ? <Power className="size-3.5" /> : <Ban className="size-3.5" />}
                       {source.manually_disabled ? "启用" : "停用"}
                     </Button>
                   </div>
@@ -195,7 +225,9 @@ export default function SourcesPage() {
           })}
         </div>
         {sources.length === 0 && (
-          <Card><CardContent className="py-16 text-center text-sm text-slate-600"><Play className="mx-auto mb-3 h-5 w-5" />暂无采集源</CardContent></Card>
+          <Card>
+            <CardEmpty icon={Play}>暂无采集源</CardEmpty>
+          </Card>
         )}
       </div>
     </div>

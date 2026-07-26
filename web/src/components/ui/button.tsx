@@ -4,52 +4,61 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 disabled:pointer-events-none disabled:opacity-50",
+  [
+    "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap border font-medium",
+    "transition-[background-color,border-color,color,box-shadow,transform] duration-150",
+    "outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+    "disabled:pointer-events-none disabled:opacity-45",
+    "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+    // press into the offset shadow instead of animating a soft glow
+    "active:translate-x-px active:translate-y-px active:shadow-none",
+  ],
   {
     variants: {
       variant: {
         default:
-          "bg-cyan-500 text-slate-950 hover:bg-cyan-400 shadow-[0_0_20px_-6px_rgba(34,211,238,0.7)]",
+          "border-primary bg-primary text-primary-foreground shadow-hard-sm hover:bg-primary/85 hover:border-primary/85",
+        accent:
+          "border-accent bg-accent text-accent-foreground shadow-hard-sm hover:bg-accent/85 hover:border-accent/85",
         secondary:
-          "bg-slate-800 text-slate-100 border border-slate-700 hover:bg-slate-700",
+          "border-input bg-secondary text-secondary-foreground hover:border-primary/40 hover:bg-secondary/70",
         outline:
-          "border border-cyan-500/40 bg-transparent text-cyan-200 hover:bg-cyan-500/10",
-        ghost: "hover:bg-slate-800 text-slate-200",
-        danger:
-          "bg-rose-600 text-white hover:bg-rose-500",
-        amber:
-          "bg-amber-400 text-slate-950 hover:bg-amber-300 shadow-[0_0_20px_-6px_rgba(251,191,36,0.7)]",
+          "border-primary/45 bg-transparent text-primary hover:border-primary hover:bg-primary/10",
+        ghost:
+          "border-transparent bg-transparent text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground",
+        destructive:
+          "border-destructive bg-destructive text-destructive-foreground shadow-hard-sm hover:bg-destructive/85 hover:border-destructive/85",
       },
       size: {
-        default: "h-10 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-11 rounded-md px-6",
-        icon: "h-10 w-10",
+        default: "h-10 px-4 text-sm",
+        sm: "h-8 px-3 text-xs",
+        lg: "h-11 px-6 text-sm",
+        icon: "size-10",
+        "icon-sm": "size-8",
       },
     },
     defaultVariants: {
       variant: "default",
       size: "default",
     },
-  }
+  },
 );
 
 export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+  extends React.ComponentProps<"button">,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean;
 }
 
-export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? Slot : "button";
-    return (
-      <Comp
-        className={cn(buttonVariants({ variant, size, className }))}
-        ref={ref}
-        {...props}
-      />
-    );
-  }
-);
-Button.displayName = "Button";
+export function Button({ className, variant, size, asChild = false, ...props }: ButtonProps) {
+  const Comp = asChild ? Slot : "button";
+  return (
+    <Comp
+      data-slot="button"
+      className={cn(buttonVariants({ variant, size }), className)}
+      {...props}
+    />
+  );
+}
+
+export { buttonVariants };

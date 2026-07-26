@@ -46,16 +46,23 @@ export function formatPercent(value?: number | null, digits = 0) {
 export function gradeColor(grade?: string) {
   switch (grade) {
     case "S":
-      return "text-amber-300 border-amber-400/40 bg-amber-400/10";
+      return "text-accent border-accent/45 bg-accent/10";
     case "A":
-      return "text-cyan-300 border-cyan-400/40 bg-cyan-400/10";
+      return "text-primary border-primary/45 bg-primary/10";
     case "B":
-      return "text-emerald-300 border-emerald-400/40 bg-emerald-400/10";
+      return "text-success border-success/45 bg-success/10";
     case "C":
       return "text-sky-300 border-sky-400/40 bg-sky-400/10";
     case "D":
       return "text-orange-300 border-orange-400/40 bg-orange-400/10";
     default:
-      return "text-zinc-400 border-zinc-500/40 bg-zinc-500/10";
+      return "text-muted-foreground border-border bg-muted";
   }
+}
+
+/** Badge variant matching a 0-100 health score, shared by sources and alerts. */
+export function healthVariant(score: number): "success" | "warn" | "danger" {
+  if (score >= 80) return "success";
+  if (score >= 50) return "warn";
+  return "danger";
 }
