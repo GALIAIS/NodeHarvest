@@ -2,8 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check, Copy, Download, FileJson, Link2, Radio } from "lucide-react";
-import { api, exportBase64Url, exportRawUrl, getAdminToken, type Pool } from "@/lib/api";
+import {
+  api,
+  errorMessage,
+  exportBase64Url,
+  exportRawUrl,
+  getAdminToken,
+  type Pool,
+} from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
+import { useSession } from "@/components/session-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,7 +30,17 @@ import {
 const ALL = "all";
 const unset = (value: string) => (value === ALL ? "" : value);
 
+/** `/api/export/*` is admin-gated, so the buttons need a reason when disabled. */
+function DownloadHint() {
+  return (
+    <p className="text-[10px] leading-4 text-muted-foreground">
+      导出接口需要登录；下方的公开订阅端点无需登录即可使用。
+    </p>
+  );
+}
+
 export default function ExportPage() {
+  const { authenticated, loading: sessionLoading } = useSession();
   const [limit, setLimit] = useState("300");
   const [minScore, setMinScore] = useState("70");
   const [ai, setAi] = useState(ALL);
@@ -40,6 +58,8 @@ export default function ExportPage() {
   const [allowQueryToken, setAllowQueryToken] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  // 会话未定时先放行，避免刷新瞬间按钮闪成禁用态
+  const canDownload = authenticated || sessionLoading;
 
   useEffect(() => {
     api.config().then((c) => {
@@ -103,7 +123,7 @@ export default function ExportPage() {
       link.click();
       URL.revokeObjectURL(href);
     } catch (error) {
-      setDownloadError(error instanceof Error ? error.message : "下载失败");
+      setDownloadError(errorMessage(error, "下载失败"));
     }
   }
 
@@ -258,10 +278,11 @@ export default function ExportPage() {
               <code className="block break-all border border-border bg-popover p-3 font-mono text-xs text-muted-foreground">
                 {raw}
               </code>
-              <Button onClick={() => download(raw, "nodes.txt")}>
+              <Button onClick={() => download(raw, "nodes.txt")} disabled={!canDownload}>
                 <Download className="size-4" />
                 下载 nodes.txt
               </Button>
+              {!canDownload && <DownloadHint />}
             </CardContent>
           </Card>
 
@@ -277,10 +298,15 @@ export default function ExportPage() {
               <code className="block break-all border border-border bg-popover p-3 font-mono text-xs text-muted-foreground">
                 {b64}
               </code>
-              <Button onClick={() => download(b64, "nodes.base64.txt")} variant="accent">
+              <Button
+                onClick={() => download(b64, "nodes.base64.txt")}
+                variant="accent"
+                disabled={!canDownload}
+              >
                 <Download className="size-4" />
                 下载 base64
               </Button>
+              {!canDownload && <DownloadHint />}
             </CardContent>
           </Card>
         </div>

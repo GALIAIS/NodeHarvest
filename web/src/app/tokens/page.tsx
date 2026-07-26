@@ -2,8 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Ban, Check, Copy, KeyRound, Plus, Power, Trash2 } from "lucide-react";
-import { api, type TokenRecord } from "@/lib/api";
+import { api, errorMessage, isAuthError, type TokenRecord } from "@/lib/api";
+import { AuthRequired } from "@/components/auth-required";
 import { PageHeader } from "@/components/page-header";
+import { useSession } from "@/components/session-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,20 +40,27 @@ export default function TokensPage() {
   });
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  // 登录态失效(401/403)属于正常状态,单独记录以渲染 AuthRequired 而非报错横幅
+  const [authError, setAuthError] = useState(false);
   const [copied, setCopied] = useState(false);
+  const { authenticated, loading: sessionLoading } = useSession();
   // open 与 target 分离:关闭时仅收起对话框,target 保留到下次打开,
   // 这样退出动画期间文案不会闪空
   const [deleteTarget, setDeleteTarget] = useState<TokenRecord | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
   const load = useCallback(async () => {
+    // 管理面接口,匿名访客不发请求,避免无意义的 401
+    if (!authenticated) return;
     try {
       setTokens(await api.tokens());
       setError("");
+      setAuthError(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "加载失败");
+      if (isAuthError(cause)) setAuthError(true);
+      else setError(errorMessage(cause, "加载失败"));
     }
-  }, []);
+  }, [authenticated]);
 
   useEffect(() => {
     const initial = setTimeout(load, 0);
@@ -76,7 +85,8 @@ export default function TokensPage() {
       setForm((current) => ({ ...current, name: "", note: "" }));
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "创建失败");
+      if (isAuthError(cause)) setAuthError(true);
+      else setError(errorMessage(cause, "创建失败"));
     } finally {
       setBusy("");
     }
@@ -88,7 +98,8 @@ export default function TokensPage() {
       await api.setTokenEnabled(token.id, !token.enabled);
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "操作失败");
+      if (isAuthError(cause)) setAuthError(true);
+      else setError(errorMessage(cause, "操作失败"));
     } finally {
       setBusy("");
     }
@@ -100,7 +111,8 @@ export default function TokensPage() {
       await api.deleteToken(token.id);
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "删除失败");
+      if (isAuthError(cause)) setAuthError(true);
+      else setError(errorMessage(cause, "删除失败"));
     } finally {
       setBusy("");
       setDeleteOpen(false);
@@ -113,6 +125,9 @@ export default function TokensPage() {
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
+
+  // 会话仍在探测时不渲染登录提示,避免每次刷新闪现
+  const needsLogin = (!authenticated && !sessionLoading) || authError;
 
   return (
     <div className="flex flex-1 flex-col">
@@ -150,6 +165,12 @@ export default function TokensPage() {
           </Alert>
         )}
 
+        {needsLogin ? (
+          <AuthRequired
+            title="凭证管理需要登录"
+            description="订阅 Token 的创建、吊销与配额属于管理面，登录后可管理。"
+          />
+        ) : (
         <div className="grid gap-4 xl:grid-cols-[minmax(340px,.65fr)_minmax(0,1.35fr)]">
           <Card className="h-fit">
             <CardHeader>
@@ -258,6 +279,7 @@ export default function TokensPage() {
             {tokens.length === 0 && <Card><CardEmpty>暂无数据库 Token</CardEmpty></Card>}
           </div>
         </div>
+        )}
       </div>
 
       <Dialog

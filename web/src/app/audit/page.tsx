@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Download, FileClock, RefreshCw } from "lucide-react";
-import { api, type AuditEntry } from "@/lib/api";
+import { api, errorMessage, isAuthError, type AuditEntry } from "@/lib/api";
+import { AuthRequired } from "@/components/auth-required";
 import { PageHeader } from "@/components/page-header";
+import { useSession } from "@/components/session-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,20 +24,30 @@ import {
 import { formatTime } from "@/lib/utils";
 
 export default function AuditPage() {
+  const { authenticated, loading: sessionLoading } = useSession();
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
+  const [needsLogin, setNeedsLogin] = useState(false);
 
   const load = useCallback(async () => {
+    // /api/admin/audit rejects anonymous callers — don't even ask.
+    if (!authenticated) return;
     try {
       setEntries(await api.audit({ from: from || undefined, to: to || undefined }));
       setError("");
+      setNeedsLogin(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "加载失败");
+      if (isAuthError(cause)) {
+        setNeedsLogin(true);
+        setError("");
+      } else {
+        setError(errorMessage(cause, "加载失败"));
+      }
     }
-  }, [from, to]);
+  }, [authenticated, from, to]);
 
   useEffect(() => {
     const initial = setTimeout(load, 0);
@@ -49,6 +61,10 @@ export default function AuditPage() {
       [entry.actor, entry.action, entry.detail].some((value) => value.toLowerCase().includes(needle)),
     );
   }, [entries, query]);
+
+  // Being signed out is a normal state, not an error — but never flash the
+  // login prompt while the session is still resolving.
+  const locked = !sessionLoading && (!authenticated || needsLogin);
 
   function download() {
     const href = URL.createObjectURL(new Blob([JSON.stringify(visible, null, 2)], { type: "application/json" }));
@@ -67,11 +83,23 @@ export default function AuditPage() {
         description="按租户隔离的不可变操作轨迹，覆盖任务、导出、源治理、凭证、用户、配置和告警动作。"
         actions={
           <>
-            <Button size="sm" variant="secondary" onClick={load}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={load}
+              disabled={!authenticated}
+              title={!authenticated ? "登录后可刷新审计日志" : undefined}
+            >
               <RefreshCw className="size-3.5" />
               刷新
             </Button>
-            <Button size="sm" variant="outline" onClick={download} disabled={!visible.length}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={download}
+              disabled={!authenticated || !visible.length}
+              title={!authenticated ? "登录后可导出审计日志" : undefined}
+            >
               <Download className="size-3.5" />
               导出 JSON
             </Button>
@@ -79,85 +107,94 @@ export default function AuditPage() {
         }
       />
       <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
-        <Card>
-          <CardContent className="control-grid p-4">
-            <Field label="开始日期" htmlFor="audit-from">
-              <Input
-                id="audit-from"
-                type="date"
-                value={from}
-                max={to || undefined}
-                onChange={(e) => setFrom(e.target.value)}
-              />
-            </Field>
-            <Field label="结束日期" htmlFor="audit-to">
-              <Input
-                id="audit-to"
-                type="date"
-                value={to}
-                min={from || undefined}
-                onChange={(e) => setTo(e.target.value)}
-              />
-            </Field>
-            <Field label="筛选当前结果" htmlFor="audit-query">
-              <Input
-                id="audit-query"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="actor / action / detail"
-              />
-            </Field>
-          </CardContent>
-        </Card>
+        {locked ? (
+          <AuthRequired
+            title="审计日志需要登录"
+            description="操作轨迹按租户隔离，登录后可查询与导出。"
+          />
+        ) : (
+          <>
+            <Card>
+              <CardContent className="control-grid p-4">
+                <Field label="开始日期" htmlFor="audit-from">
+                  <Input
+                    id="audit-from"
+                    type="date"
+                    value={from}
+                    max={to || undefined}
+                    onChange={(e) => setFrom(e.target.value)}
+                  />
+                </Field>
+                <Field label="结束日期" htmlFor="audit-to">
+                  <Input
+                    id="audit-to"
+                    type="date"
+                    value={to}
+                    min={from || undefined}
+                    onChange={(e) => setTo(e.target.value)}
+                  />
+                </Field>
+                <Field label="筛选当前结果" htmlFor="audit-query">
+                  <Input
+                    id="audit-query"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="actor / action / detail"
+                  />
+                </Field>
+              </CardContent>
+            </Card>
 
-        {error && (
-          <Alert variant="danger">
-            <AlertTriangle />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
+            {error && (
+              <Alert variant="danger">
+                <AlertTriangle />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            <Card>
+              <CardContent className="px-0 pb-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>ID</TableHead>
+                      <TableHead>时间</TableHead>
+                      <TableHead>Actor</TableHead>
+                      <TableHead>动作</TableHead>
+                      <TableHead>详情</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {visible.map((entry) => (
+                      <TableRow key={entry.id}>
+                        <TableCell className="font-mono text-[10px] text-muted-foreground">
+                          #{entry.id}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap font-mono text-[10px]">
+                          {formatTime(entry.at)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={entry.actor === "system" ? "secondary" : "default"}>
+                            {entry.actor}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-primary">{entry.action}</TableCell>
+                        <TableCell className="max-w-lg break-words text-xs text-muted-foreground">
+                          {entry.detail || "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {visible.length === 0 && (
+                      <TableEmpty colSpan={5} icon={FileClock}>
+                        当前范围没有审计记录
+                      </TableEmpty>
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </>
         )}
-
-        <Card>
-          <CardContent className="px-0 pb-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>时间</TableHead>
-                  <TableHead>Actor</TableHead>
-                  <TableHead>动作</TableHead>
-                  <TableHead>详情</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visible.map((entry) => (
-                  <TableRow key={entry.id}>
-                    <TableCell className="font-mono text-[10px] text-muted-foreground">
-                      #{entry.id}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap font-mono text-[10px]">
-                      {formatTime(entry.at)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={entry.actor === "system" ? "secondary" : "default"}>
-                        {entry.actor}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-primary">{entry.action}</TableCell>
-                    <TableCell className="max-w-lg break-words text-xs text-muted-foreground">
-                      {entry.detail || "—"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {visible.length === 0 && (
-                  <TableEmpty colSpan={5} icon={FileClock}>
-                    当前范围没有审计记录
-                  </TableEmpty>
-                )}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
       </div>
     </div>
   );

@@ -9,8 +9,10 @@ import {
   type DashboardStats,
   type NodeItem,
 } from "@/lib/api";
+import { AuthRequired } from "@/components/auth-required";
 import { JobActions } from "@/components/job-actions";
 import { PageHeader } from "@/components/page-header";
+import { useSession } from "@/components/session-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +28,7 @@ import {
 import { formatMs } from "@/lib/utils";
 
 export default function AIPage() {
+  const { loading: sessionLoading, canOperate } = useSession();
   const [targets, setTargets] = useState<AITarget[]>([]);
   const [hostAI, setHostAI] = useState<Record<string, AIProbeResult>>({});
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -92,7 +95,15 @@ export default function AIPage() {
             <CardDescription>建议先测速再 AI 探测，或直接一键全流程</CardDescription>
           </CardHeader>
           <CardContent>
-            <JobActions onStarted={() => load()} />
+            {sessionLoading || canOperate ? (
+              <JobActions onStarted={() => load()} />
+            ) : (
+              <AuthRequired
+                compact
+                title="需要登录后运行任务"
+                description="AI 探测任务需要 operator 及以上权限。运行结果无需登录即可查看。"
+              />
+            )}
           </CardContent>
         </Card>
 

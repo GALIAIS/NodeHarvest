@@ -281,6 +281,41 @@ function params(values: Record<string, string | number | boolean | undefined>) {
   return encoded ? `?${encoded}` : "";
 }
 
+/**
+ * Carries the HTTP status so callers can tell "you are not signed in" apart
+ * from a genuine backend failure — the two need very different UI.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/** True when the request failed only because the caller lacks credentials. */
+export function isAuthError(cause: unknown): boolean {
+  return cause instanceof ApiError && (cause.status === 401 || cause.status === 403);
+}
+
+/** Human-readable message for a failed request, without leaking raw 401 bodies. */
+export function errorMessage(cause: unknown, fallback = "请求失败"): string {
+  if (isAuthError(cause)) return "需要登录后才能访问";
+  if (cause instanceof Error && cause.message.trim()) return cause.message;
+  return fallback;
+}
+
+/**
+ * Go marshals an empty slice as JSON `null`, so several list endpoints answer
+ * `null` instead of `[]` when they have nothing to return. Callers render these
+ * with `.map()`, so normalise here rather than guarding at every call site.
+ */
+async function requestList<T>(path: string, init?: RequestInit): Promise<T[]> {
+  return (await request<T[] | null>(path, init)) ?? [];
+}
+
 async function request<T>(path: string, init?: RequestInit, acceptErrorStatus = false): Promise<T> {
   const token =
     typeof window === "undefined"
@@ -298,7 +333,7 @@ async function request<T>(path: string, init?: RequestInit, acceptErrorStatus = 
   });
   if (!res.ok && !acceptErrorStatus) {
     const message = (await res.text()).trim();
-    throw new Error(message || `${res.status} ${res.statusText}`);
+    throw new ApiError(res.status, message || `${res.status} ${res.statusText}`);
   }
   return res.json() as Promise<T>;
 }
@@ -317,7 +352,7 @@ export const api = {
     }),
   logout: () => request<{ authenticated: boolean }>("/api/v1/auth/logout", { method: "POST" }),
   stats: () => request<DashboardStats>("/api/stats"),
-  trends: (days = 30) => request<DailyMetric[]>(`/api/stats/trends?days=${days}`),
+  trends: (days = 30) => requestList<DailyMetric>(`/api/stats/trends?days=${days}`),
   nodes: (values: Record<string, string | number | boolean | undefined> = {}) =>
     request<{
       total: number;
@@ -328,14 +363,14 @@ export const api = {
     }>(`/api/nodes${params(values)}`),
   node: (id: string) => request<NodeItem>(`/api/nodes/${encodeURIComponent(id)}`),
   nodeMetrics: (id: string, days = 30) =>
-    request<DailyMetric[]>(`/api/nodes/${encodeURIComponent(id)}/metrics?days=${days}`),
+    requestList<DailyMetric>(`/api/nodes/${encodeURIComponent(id)}/metrics?days=${days}`),
   jobs: (values: Record<string, string | number | boolean | undefined> = {}) =>
     request<{ jobs: Job[]; next_cursor: string; has_more: boolean }>(
       `/api/jobs${params(values)}`,
     ),
   job: (id: string) => request<Job>(`/api/jobs/${encodeURIComponent(id)}`),
   jobEvents: (id: string, after = 0) =>
-    request<JobEvent[]>(`/api/jobs/${encodeURIComponent(id)}/events?after=${after}`),
+    requestList<JobEvent>(`/api/jobs/${encodeURIComponent(id)}/events?after=${after}`),
   startFetch: (opts: Record<string, unknown> = {}) =>
     request<Job>("/api/jobs/fetch", { method: "POST", body: JSON.stringify(opts) }),
   startQuality: (opts: Record<string, unknown> = {}) =>
@@ -351,13 +386,13 @@ export const api = {
       method: "POST",
     }),
   tasks: (status = "") =>
-    request<QueuedTask[]>(`/api/admin/tasks${params({ limit: 200, status })}`),
+    requestList<QueuedTask>(`/api/admin/tasks${params({ limit: 200, status })}`),
   queue: () =>
     request<{ enabled: boolean; workers?: number; tasks?: Record<string, number> }>(
       "/api/admin/queue",
     ),
   sources: (sort = "priority") =>
-    request<Source[]>(`/api/sources${params({ sort })}`),
+    requestList<Source>(`/api/sources${params({ sort })}`),
   setSourceEnabled: (name: string, enabled: boolean) =>
     request<{ name: string; enabled: boolean }>(
       `/api/admin/sources/${encodeURIComponent(name)}/${enabled ? "enable" : "disable"}`,
@@ -371,7 +406,7 @@ export const api = {
     request<{ total_countries: number; total_nodes: number; countries: CountryRow[] }>(
       `/api/countries${params(values)}`,
     ),
-  aiTargets: () => request<AITarget[]>("/api/ai/targets"),
+  aiTargets: () => requestList<AITarget>("/api/ai/targets"),
   hostAI: () => request<Record<string, AIProbeResult>>("/api/ai/host"),
   config: () => request<Record<string, unknown>>("/api/config"),
   updateConfig: (patch: Record<string, unknown>) =>
@@ -379,10 +414,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ ...patch, confirm: true }),
     }),
-  configVersions: () => request<ConfigVersion[]>("/api/admin/config/versions?limit=50"),
+  configVersions: () => requestList<ConfigVersion>("/api/admin/config/versions?limit=50"),
   schedule: () => request<Record<string, unknown>>("/api/schedule"),
-  pools: () => request<Pool[]>("/api/pools"),
-  tokens: () => request<TokenRecord[]>("/api/admin/tokens"),
+  pools: () => requestList<Pool>("/api/pools"),
+  tokens: () => requestList<TokenRecord>("/api/admin/tokens"),
   createToken: (body: Record<string, unknown>) =>
     request<TokenRecord>("/api/admin/tokens", { method: "POST", body: JSON.stringify(body) }),
   setTokenEnabled: (id: string, enabled: boolean) =>
@@ -394,7 +429,7 @@ export const api = {
     request<{ deleted: string }>(`/api/admin/tokens/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
-  users: () => request<UserRecord[]>("/api/admin/users"),
+  users: () => requestList<UserRecord>("/api/admin/users"),
   createUser: (body: Record<string, unknown>) =>
     request<UserRecord>("/api/admin/users", { method: "POST", body: JSON.stringify(body) }),
   setUserEnabled: (id: string, enabled: boolean) =>
@@ -403,9 +438,9 @@ export const api = {
       { method: "POST" },
     ),
   audit: (values: Record<string, string | number | undefined> = {}) =>
-    request<AuditEntry[]>(`/api/admin/audit${params({ limit: 200, ...values })}`),
+    requestList<AuditEntry>(`/api/admin/audit${params({ limit: 200, ...values })}`),
   alerts: (active = true) =>
-    request<AlertRecord[]>(`/api/admin/alerts${params({ active, limit: 200 })}`),
+    requestList<AlertRecord>(`/api/admin/alerts${params({ active, limit: 200 })}`),
   changeAlert: (id: string, action: "acknowledge" | "resolve") =>
     request<Record<string, unknown>>(
       `/api/admin/alerts/${encodeURIComponent(id)}/${action}`,

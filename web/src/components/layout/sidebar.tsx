@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 import {
   Activity,
   BellRing,
@@ -11,6 +10,7 @@ import {
   FileClock,
   KeyRound,
   LayoutDashboard,
+  Lock,
   LogIn,
   LogOut,
   Network,
@@ -21,12 +21,16 @@ import {
   ShieldCheck,
   Users,
 } from "lucide-react";
-import { api, type SessionInfo } from "@/lib/api";
+import { api } from "@/lib/api";
+import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
+// `admin: true` marks views whose data comes from /api/admin/* or /api/jobs,
+// which return 401 to anonymous visitors — the nav shows a lock so the
+// restriction is visible before navigating rather than after.
 const groups = [
   {
     label: "Observe",
@@ -34,7 +38,7 @@ const groups = [
       { href: "/", label: "仪表盘", icon: LayoutDashboard },
       { href: "/nodes", label: "节点库", icon: Network },
       { href: "/sources", label: "采集源", icon: Server },
-      { href: "/jobs", label: "任务中心", icon: Activity },
+      { href: "/jobs", label: "任务中心", icon: Activity, admin: true },
       { href: "/ai", label: "AI 可达", icon: Bot },
       { href: "/export", label: "订阅池", icon: Download },
     ],
@@ -42,10 +46,10 @@ const groups = [
   {
     label: "Govern",
     items: [
-      { href: "/alerts", label: "异常告警", icon: BellRing },
-      { href: "/tokens", label: "Token", icon: KeyRound },
-      { href: "/users", label: "用户", icon: Users },
-      { href: "/audit", label: "审计", icon: FileClock },
+      { href: "/alerts", label: "异常告警", icon: BellRing, admin: true },
+      { href: "/tokens", label: "Token", icon: KeyRound, admin: true },
+      { href: "/users", label: "用户", icon: Users, admin: true },
+      { href: "/audit", label: "审计", icon: FileClock, admin: true },
       { href: "/system", label: "系统", icon: Settings2 },
       { href: "/terms", label: "合规", icon: Scale },
     ],
@@ -58,17 +62,20 @@ function NavItem({
   icon: Icon,
   active,
   compact,
+  locked,
 }: {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   active: boolean;
   compact?: boolean;
+  locked?: boolean;
 }) {
   return (
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
+      title={locked ? `${label}（需要登录）` : undefined}
       className={cn(
         // active state is a solid inset rail on the left edge — no rounded pill
         "group flex items-center gap-2.5 border-l-2 px-3 py-2 text-sm transition-colors",
@@ -80,17 +87,16 @@ function NavItem({
     >
       <Icon className={cn("size-4", active ? "text-primary" : "text-muted-foreground/70 group-hover:text-foreground")} />
       {label}
+      {locked && !compact && (
+        <Lock className="ml-auto size-3 text-muted-foreground/60" aria-hidden />
+      )}
     </Link>
   );
 }
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [session, setSession] = useState<SessionInfo | null>(null);
-
-  useEffect(() => {
-    api.me().then(setSession).catch(() => setSession(null));
-  }, [pathname]);
+  const { session, authenticated, loading, refresh } = useSession();
 
   if (pathname === "/login") return null;
 
@@ -126,8 +132,13 @@ export function Sidebar() {
                 <Separator className="flex-1" />
               </div>
               <div>
-                {group.items.map((item) => (
-                  <NavItem key={item.href} {...item} active={active(item.href)} />
+                {group.items.map(({ admin, ...item }) => (
+                  <NavItem
+                    key={item.href}
+                    {...item}
+                    active={active(item.href)}
+                    locked={Boolean(admin) && !authenticated && !loading}
+                  />
                 ))}
               </div>
             </div>
@@ -135,7 +146,7 @@ export function Sidebar() {
         </nav>
 
         <div className="border-t border-border p-3">
-          {session?.authenticated ? (
+          {authenticated && session ? (
             <div className="flex items-center justify-between gap-2 border border-border bg-muted/50 p-3">
               <div className="min-w-0">
                 <p className="truncate text-xs font-semibold text-foreground">
@@ -151,7 +162,12 @@ export function Sidebar() {
                     variant="ghost"
                     size="icon-sm"
                     aria-label="退出登录"
-                    onClick={() => api.logout().then(() => window.location.assign("/login"))}
+                    onClick={() =>
+                      api
+                        .logout()
+                        .then(refresh)
+                        .then(() => window.location.assign("/login"))
+                    }
                     className="hover:text-destructive"
                   >
                     <LogOut className="size-4" />
@@ -188,7 +204,14 @@ export function Sidebar() {
         <nav className="flex gap-1 overflow-x-auto border-t border-border px-2">
           {groups.flatMap((group) =>
             group.items.map((item) => (
-              <NavItem key={item.href} {...item} active={active(item.href)} compact />
+              <NavItem
+                key={item.href}
+                href={item.href}
+                label={item.label}
+                icon={item.icon}
+                active={active(item.href)}
+                compact
+              />
             )),
           )}
         </nav>

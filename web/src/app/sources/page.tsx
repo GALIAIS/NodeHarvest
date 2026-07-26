@@ -11,8 +11,9 @@ import {
   RefreshCw,
   ShieldAlert,
 } from "lucide-react";
-import { api, type Source } from "@/lib/api";
+import { api, errorMessage, isAuthError, type Source } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
+import { useSession } from "@/components/session-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,9 +25,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn, formatBytes, formatMs, formatPercent, formatTime } from "@/lib/utils";
 
 export default function SourcesPage() {
+  const { canOperate } = useSession();
   const [sources, setSources] = useState<Source[]>([]);
   const [sort, setSort] = useState("priority");
   const [busy, setBusy] = useState("");
@@ -37,7 +40,7 @@ export default function SourcesPage() {
       setSources(await api.sources(sort));
       setErr(null);
     } catch (cause) {
-      setErr(cause instanceof Error ? cause.message : "加载失败");
+      setErr(errorMessage(cause, "加载失败"));
     }
   }, [sort]);
 
@@ -54,7 +57,7 @@ export default function SourcesPage() {
       else await api.setSourceEnabled(source.name, action === "enable");
       await load();
     } catch (cause) {
-      setErr(cause instanceof Error ? cause.message : "操作失败");
+      setErr(isAuthError(cause) ? "需要登录后才能执行此操作" : errorMessage(cause, "操作失败"));
     } finally {
       setBusy("");
     }
@@ -200,24 +203,40 @@ export default function SourcesPage() {
                   </div>
 
                   <div className="flex gap-2 lg:justify-end">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={loading}
-                      onClick={() => act(source, "probe")}
-                    >
-                      <Activity className={cn("size-3.5", busy === `${source.name}:probe` && "animate-pulse")} />
-                      探测
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={source.manually_disabled ? "secondary" : "destructive"}
-                      disabled={loading}
-                      onClick={() => act(source, source.manually_disabled ? "enable" : "disable")}
-                    >
-                      {source.manually_disabled ? <Power className="size-3.5" /> : <Ban className="size-3.5" />}
-                      {source.manually_disabled ? "启用" : "停用"}
-                    </Button>
+                    <Tooltip>
+                      {/* wrapper span keeps the tooltip reachable when the
+                          button is disabled (pointer-events-none) */}
+                      <TooltipTrigger asChild>
+                        <span tabIndex={canOperate ? -1 : 0} className="inline-flex">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={loading || !canOperate}
+                            onClick={() => act(source, "probe")}
+                          >
+                            <Activity className={cn("size-3.5", busy === `${source.name}:probe` && "animate-pulse")} />
+                            探测
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {!canOperate && <TooltipContent side="top">需要 operator 权限</TooltipContent>}
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span tabIndex={canOperate ? -1 : 0} className="inline-flex">
+                          <Button
+                            size="sm"
+                            variant={source.manually_disabled ? "secondary" : "destructive"}
+                            disabled={loading || !canOperate}
+                            onClick={() => act(source, source.manually_disabled ? "enable" : "disable")}
+                          >
+                            {source.manually_disabled ? <Power className="size-3.5" /> : <Ban className="size-3.5" />}
+                            {source.manually_disabled ? "启用" : "停用"}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {!canOperate && <TooltipContent side="top">需要 operator 权限</TooltipContent>}
+                    </Tooltip>
                   </div>
                 </CardContent>
               </Card>

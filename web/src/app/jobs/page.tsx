@@ -10,9 +10,11 @@ import {
   TerminalSquare,
   TimerReset,
 } from "lucide-react";
-import { api, type Job, type JobEvent, type QueuedTask } from "@/lib/api";
+import { api, errorMessage, isAuthError, type Job, type JobEvent, type QueuedTask } from "@/lib/api";
+import { AuthRequired } from "@/components/auth-required";
 import { JobActions } from "@/components/job-actions";
 import { PageHeader } from "@/components/page-header";
+import { useSession } from "@/components/session-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,15 +30,20 @@ function statusVariant(status: string): "success" | "warn" | "danger" | "default
 }
 
 export default function JobsPage() {
+  const { authenticated, loading } = useSession();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [tasks, setTasks] = useState<QueuedTask[]>([]);
   const [queue, setQueue] = useState<Record<string, number>>({});
   const [selectedID, setSelectedID] = useState("");
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  // Set when a request comes back 401/403 mid-session (expired login):
+  // swaps the admin content for AuthRequired instead of a red error banner.
+  const [authExpired, setAuthExpired] = useState(false);
   const [canceling, setCanceling] = useState("");
 
   const load = useCallback(async () => {
+    if (!authenticated) return;
     try {
       const [jobPage, taskList, queueState] = await Promise.all([
         api.jobs({ limit: 100 }),
@@ -49,11 +56,17 @@ export default function JobsPage() {
       setSelectedID((current) => current || jobPage.jobs[0]?.id || "");
       setErr(null);
     } catch (cause) {
-      setErr(cause instanceof Error ? cause.message : "加载失败");
+      if (isAuthError(cause)) {
+        setAuthExpired(true);
+        setErr(null);
+        return;
+      }
+      setErr(errorMessage(cause, "加载失败"));
     }
-  }, []);
+  }, [authenticated]);
 
   const loadEvents = useCallback(async () => {
+    if (!authenticated) return;
     if (!selectedID) {
       setEvents([]);
       return;
@@ -61,27 +74,34 @@ export default function JobsPage() {
     try {
       setEvents(await api.jobEvents(selectedID));
     } catch (cause) {
-      setErr(cause instanceof Error ? cause.message : "事件流加载失败");
+      if (isAuthError(cause)) {
+        setAuthExpired(true);
+        setErr(null);
+        return;
+      }
+      setErr(errorMessage(cause, "事件流加载失败"));
     }
-  }, [selectedID]);
+  }, [authenticated, selectedID]);
 
   useEffect(() => {
+    if (!authenticated || authExpired) return;
     const initial = setTimeout(load, 0);
     const timer = setInterval(load, 2500);
     return () => {
       clearTimeout(initial);
       clearInterval(timer);
     };
-  }, [load]);
+  }, [load, authenticated, authExpired]);
 
   useEffect(() => {
+    if (!authenticated || authExpired) return;
     const initial = setTimeout(loadEvents, 0);
     const timer = setInterval(loadEvents, 1500);
     return () => {
       clearTimeout(initial);
       clearInterval(timer);
     };
-  }, [loadEvents]);
+  }, [loadEvents, authenticated, authExpired]);
 
   const taskByID = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const selected = jobs.find((job) => job.id === selectedID);
@@ -93,11 +113,19 @@ export default function JobsPage() {
       await api.cancelTask(id);
       await load();
     } catch (cause) {
-      setErr(cause instanceof Error ? cause.message : "取消失败");
+      if (isAuthError(cause)) {
+        setAuthExpired(true);
+      } else {
+        setErr(errorMessage(cause, "取消失败"));
+      }
     } finally {
       setCanceling("");
     }
   }
+
+  // Anonymous (settled) or expired sessions see the sign-in prompt instead of
+  // the admin-only queue, launcher, job list and event timeline.
+  const needsLogin = (!loading && !authenticated) || authExpired;
 
   return (
     <div className="flex flex-1 flex-col">
@@ -113,6 +141,13 @@ export default function JobsPage() {
       />
 
       <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
+        {needsLogin ? (
+          <AuthRequired
+            title="任务中心需要登录"
+            description="任务队列、事件时间线与任务操作都属于管理面。公开的节点、采集源与订阅数据无需登录即可查看。"
+          />
+        ) : (
+          <>
         <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {["queued", "running", "completed", "failed", "dead", "canceled"].map((status) => (
             <Card key={status}>
@@ -251,6 +286,8 @@ export default function JobsPage() {
             </CardContent>
           </Card>
         </div>
+          </>
+        )}
       </div>
     </div>
   );

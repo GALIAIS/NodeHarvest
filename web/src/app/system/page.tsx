@@ -11,8 +11,10 @@ import {
   Save,
   ServerCog,
 } from "lucide-react";
-import { api, type ConfigVersion, type Health } from "@/lib/api";
+import { api, errorMessage, isAuthError, type ConfigVersion, type Health } from "@/lib/api";
+import { AuthRequired } from "@/components/auth-required";
 import { PageHeader } from "@/components/page-header";
+import { useSession } from "@/components/session-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,6 +60,7 @@ const empty: RuntimeForm = {
 };
 
 export default function SystemPage() {
+  const { authenticated, loading: sessionLoading } = useSession();
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [health, setHealth] = useState<Health | null>(null);
   const [ready, setReady] = useState<{ ready: boolean; reasons: string[] } | null>(null);
@@ -70,11 +73,10 @@ export default function SystemPage() {
 
   const load = useCallback(async () => {
     try {
-      const [cfg, healthState, readyState, versionList] = await Promise.all([
+      const [cfg, healthState, readyState] = await Promise.all([
         api.config(),
         api.health(),
         api.ready(),
-        api.configVersions(),
       ]);
       const publish = (cfg.publish || {}) as Record<string, unknown>;
       const governance = (cfg.governance || {}) as Record<string, unknown>;
@@ -82,7 +84,6 @@ export default function SystemPage() {
       setConfig(cfg);
       setHealth(healthState);
       setReady(readyState);
-      setVersions(versionList);
       setForm({
         publish_min_score: String(publish.min_score ?? ""),
         publish_max_nodes: String(publish.max_nodes ?? ""),
@@ -98,9 +99,20 @@ export default function SystemPage() {
       });
       setError("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "加载失败");
+      if (!isAuthError(cause)) setError(errorMessage(cause, "加载失败"));
     }
-  }, []);
+    // Version history is admin-only; fetch it separately so its failure
+    // never clears the public config/health/ready state above.
+    if (!authenticated) {
+      setVersions([]);
+      return;
+    }
+    try {
+      setVersions(await api.configVersions());
+    } catch (cause) {
+      if (!isAuthError(cause)) setError(errorMessage(cause, "加载失败"));
+    }
+  }, [authenticated]);
 
   useEffect(() => {
     const initial = setTimeout(load, 0);
@@ -132,7 +144,7 @@ export default function SystemPage() {
       setConfirm("");
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "保存失败");
+      if (!isAuthError(cause)) setError(errorMessage(cause, "保存失败"));
     } finally {
       setBusy(false);
     }
@@ -232,6 +244,13 @@ export default function SystemPage() {
               <CardDescription>保存后立即生效、写入数据库版本并刷新订阅缓存。</CardDescription>
             </CardHeader>
             <CardContent>
+              {!authenticated && !sessionLoading ? (
+                <AuthRequired
+                  compact
+                  title="需要登录后修改"
+                  description="运行时配置的变更会写入审计与配置版本。"
+                />
+              ) : (
               <form onSubmit={save} className="space-y-6">
                 <fieldset>
                   <legend className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
@@ -246,6 +265,7 @@ export default function SystemPage() {
                         max="100"
                         value={form.publish_min_score}
                         onChange={(e) => field("publish_min_score", e.target.value)}
+                        disabled={!authenticated}
                       />
                     </Field>
                     <Field label="最多节点" htmlFor="publish_max_nodes">
@@ -256,6 +276,7 @@ export default function SystemPage() {
                         max="100000"
                         value={form.publish_max_nodes}
                         onChange={(e) => field("publish_max_nodes", e.target.value)}
+                        disabled={!authenticated}
                       />
                     </Field>
                     <Field label="缓存秒数" htmlFor="publish_cache_sec">
@@ -266,6 +287,7 @@ export default function SystemPage() {
                         max="86400"
                         value={form.publish_cache_sec}
                         onChange={(e) => field("publish_cache_sec", e.target.value)}
+                        disabled={!authenticated}
                       />
                     </Field>
                     <Field label="最大节点年龄（小时）" htmlFor="publish_max_node_age_hours">
@@ -276,6 +298,7 @@ export default function SystemPage() {
                         max="8760"
                         value={form.publish_max_node_age_hours}
                         onChange={(e) => field("publish_max_node_age_hours", e.target.value)}
+                        disabled={!authenticated}
                       />
                     </Field>
                   </div>
@@ -284,6 +307,7 @@ export default function SystemPage() {
                       id="publish_alive_only"
                       checked={form.publish_alive_only}
                       onCheckedChange={(state) => field("publish_alive_only", state)}
+                      disabled={!authenticated}
                     />
                     <Label htmlFor="publish_alive_only">仅发布存活节点</Label>
                   </div>
@@ -302,6 +326,7 @@ export default function SystemPage() {
                         max="100"
                         value={form.governance_disable_after_failures}
                         onChange={(e) => field("governance_disable_after_failures", e.target.value)}
+                        disabled={!authenticated}
                       />
                     </Field>
                     <Field label="冷却小时" htmlFor="governance_cooldown_hours">
@@ -312,6 +337,7 @@ export default function SystemPage() {
                         max="720"
                         value={form.governance_cooldown_hours}
                         onChange={(e) => field("governance_cooldown_hours", e.target.value)}
+                        disabled={!authenticated}
                       />
                     </Field>
                     <Field label="HQ 骤降阈值 %" htmlFor="governance_hq_drop_percent">
@@ -322,6 +348,7 @@ export default function SystemPage() {
                         max="100"
                         value={form.governance_hq_drop_percent}
                         onChange={(e) => field("governance_hq_drop_percent", e.target.value)}
+                        disabled={!authenticated}
                       />
                     </Field>
                     <Field label="单国家占比阈值 %" htmlFor="governance_country_share_percent">
@@ -332,6 +359,7 @@ export default function SystemPage() {
                         max="100"
                         value={form.governance_country_share_percent}
                         onChange={(e) => field("governance_country_share_percent", e.target.value)}
+                        disabled={!authenticated}
                       />
                     </Field>
                   </div>
@@ -347,6 +375,7 @@ export default function SystemPage() {
                         id="dial_after_quality"
                         checked={form.dial_after_quality}
                         onCheckedChange={(state) => field("dial_after_quality", state)}
+                        disabled={!authenticated}
                       />
                       <Label htmlFor="dial_after_quality">质量任务后抽样真实拨测</Label>
                     </div>
@@ -362,6 +391,7 @@ export default function SystemPage() {
                         max="100000"
                         value={form.dial_after_quality_max}
                         onChange={(e) => field("dial_after_quality_max", e.target.value)}
+                        disabled={!authenticated}
                       />
                     </Field>
                   </div>
@@ -379,13 +409,20 @@ export default function SystemPage() {
                       value={confirm}
                       onChange={(e) => setConfirm(e.target.value)}
                       autoComplete="off"
+                      disabled={!authenticated}
                     />
                   </Field>
-                  <Button type="submit" variant="destructive" disabled={busy || confirm !== "APPLY"}>
+                  <Button
+                    type="submit"
+                    variant="destructive"
+                    disabled={busy || confirm !== "APPLY" || !authenticated}
+                    title={!authenticated ? "需要登录后才能应用配置" : undefined}
+                  >
                     <Save className="size-4" /> {busy ? "应用中…" : "应用配置"}
                   </Button>
                 </div>
               </form>
+              )}
             </CardContent>
           </Card>
 
@@ -419,6 +456,9 @@ export default function SystemPage() {
                 <CardDescription>最近 50 次确认后的热更新。</CardDescription>
               </CardHeader>
               <CardContent className="max-h-[34rem] space-y-3 overflow-y-auto">
+                {!authenticated && !sessionLoading && (
+                  <AuthRequired compact title="需要登录" description="配置版本历史属于管理面。" />
+                )}
                 {versions.map((version) => (
                   <div key={version.id} className="border-l-2 border-border pl-3">
                     <div className="flex items-center justify-between gap-2">
@@ -438,7 +478,9 @@ export default function SystemPage() {
                     </details>
                   </div>
                 ))}
-                {versions.length === 0 && <CardEmpty>暂无热更新版本</CardEmpty>}
+                {versions.length === 0 && authenticated && (
+                  <CardEmpty>暂无热更新版本</CardEmpty>
+                )}
               </CardContent>
             </Card>
           </div>

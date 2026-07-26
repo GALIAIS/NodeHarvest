@@ -2,8 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Ban, Plus, Power, Shield, UserRound } from "lucide-react";
-import { api, type UserRecord } from "@/lib/api";
+import { api, errorMessage, isAuthError, type UserRecord } from "@/lib/api";
+import { AuthRequired } from "@/components/auth-required";
 import { PageHeader } from "@/components/page-header";
+import { useSession } from "@/components/session-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,24 +31,35 @@ import {
 import { formatTime } from "@/lib/utils";
 
 export default function UsersPage() {
+  const { authenticated, loading: sessionLoading } = useSession();
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [form, setForm] = useState({ username: "", email: "", password: "", role: "viewer" });
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  // 401/403 is a normal "sign in first" state, rendered via AuthRequired.
+  const [authBlocked, setAuthBlocked] = useState(false);
 
   const load = useCallback(async () => {
     try {
       setUsers(await api.users());
+      setAuthBlocked(false);
       setError("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "加载失败");
+      if (isAuthError(cause)) {
+        setAuthBlocked(true);
+        setError("");
+      } else {
+        setError(errorMessage(cause, "加载失败"));
+      }
     }
   }, []);
 
   useEffect(() => {
+    // Admin-only endpoint: never fire it for anonymous visitors.
+    if (!authenticated) return;
     const initial = setTimeout(load, 0);
     return () => clearTimeout(initial);
-  }, [load]);
+  }, [authenticated, load]);
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -56,7 +69,12 @@ export default function UsersPage() {
       setForm({ username: "", email: "", password: "", role: "viewer" });
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "创建失败");
+      if (isAuthError(cause)) {
+        setAuthBlocked(true);
+        setError("");
+      } else {
+        setError(errorMessage(cause, "创建失败"));
+      }
     } finally {
       setBusy("");
     }
@@ -68,11 +86,20 @@ export default function UsersPage() {
       await api.setUserEnabled(user.id, !user.enabled);
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "操作失败");
+      if (isAuthError(cause)) {
+        setAuthBlocked(true);
+        setError("");
+      } else {
+        setError(errorMessage(cause, "操作失败"));
+      }
     } finally {
       setBusy("");
     }
   }
+
+  // Wait for /auth/me to settle before deciding, so the sign-in card never
+  // flashes for already-authenticated visitors on reload.
+  const showAuthRequired = (!authenticated && !sessionLoading) || authBlocked;
 
   return (
     <div className="flex flex-1 flex-col">
@@ -89,6 +116,12 @@ export default function UsersPage() {
           </Alert>
         )}
 
+        {showAuthRequired ? (
+          <AuthRequired
+            title="用户管理需要登录"
+            description="租户内的身份与角色管理属于管理面，登录后可查看。"
+          />
+        ) : (
         <div className="grid gap-4 xl:grid-cols-[minmax(320px,.55fr)_minmax(0,1.45fr)]">
           <Card className="h-fit">
             <CardHeader>
@@ -233,6 +266,7 @@ export default function UsersPage() {
             </CardContent>
           </Card>
         </div>
+        )}
       </div>
     </div>
   );

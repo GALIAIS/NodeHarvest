@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   api,
+  errorMessage,
   type AlertRecord,
   type CountryRow,
   type DailyMetric,
@@ -25,8 +26,10 @@ import {
   type NodeItem,
   type Source,
 } from "@/lib/api";
+import { AuthRequired } from "@/components/auth-required";
 import { JobActions } from "@/components/job-actions";
 import { PageHeader } from "@/components/page-header";
+import { useSession } from "@/components/session-provider";
 import { StatCard } from "@/components/stat-card";
 import { TrendChart } from "@/components/trend-chart";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -73,6 +76,7 @@ type Schedule = {
 const GRADES = ["S", "A", "B", "C", "D", "F"] as const;
 
 export default function DashboardPage() {
+  const { authenticated, loading: sessionLoading } = useSession();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -81,6 +85,8 @@ export default function DashboardPage() {
   const [countries, setCountries] = useState<CountryRow[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
+  // 告警接口属于管理面：只有本轮拉取真正成功时才把 0 条视为“无异常”
+  const [alertsVisible, setAlertsVisible] = useState(false);
   const [schedule, setSchedule] = useState<Schedule>({});
   const [err, setErr] = useState<string | null>(null);
   const [now, setNow] = useState(0);
@@ -104,17 +110,26 @@ export default function DashboardPage() {
       setSchedule(scheduleResult as Schedule);
       setErr(null);
     } catch (cause) {
-      setErr(cause instanceof Error ? cause.message : "无法连接后端");
+      setErr(errorMessage(cause, "无法连接后端"));
     }
-    const [jobResult, trendResult, alertResult] = await Promise.allSettled([
-      api.jobs({ limit: 20 }),
+    // trends 是公开接口；jobs / alerts 需要登录，匿名请求必然 401，直接跳过
+    const [trendResult, jobResult, alertResult] = await Promise.allSettled([
       api.trends(30),
-      api.alerts(true),
+      authenticated ? api.jobs({ limit: 20 }) : Promise.resolve(null),
+      authenticated ? api.alerts(true) : Promise.resolve(null),
     ]);
-    if (jobResult.status === "fulfilled") setJobs(jobResult.value.jobs);
     if (trendResult.status === "fulfilled") setTrends(trendResult.value);
-    if (alertResult.status === "fulfilled") setAlerts(alertResult.value);
-  }, []);
+    if (jobResult.status === "fulfilled") setJobs(jobResult.value?.jobs ?? []);
+    // 判定依据是"这次请求是否被允许"，而不是返回值真假：无告警时后端
+    // 返回 JSON null，若按真值判断会把"已登录且零告警"误判成"未登录"。
+    if (authenticated && alertResult.status === "fulfilled") {
+      setAlerts(alertResult.value ?? []);
+      setAlertsVisible(true);
+    } else {
+      setAlerts([]);
+      setAlertsVisible(false);
+    }
+  }, [authenticated]);
 
   useEffect(() => {
     const initial = setTimeout(load, 0);
@@ -185,9 +200,15 @@ export default function DashboardPage() {
           />
           <StatCard
             label="活跃告警"
-            value={alerts.length}
+            value={alertsVisible ? alerts.length : "—"}
             hint={
-              alerts.some((alert) => alert.severity === "critical") ? "存在关键异常" : "无关键异常"
+              alertsVisible
+                ? alerts.some((alert) => alert.severity === "critical")
+                  ? "存在关键异常"
+                  : "无关键异常"
+                : sessionLoading
+                  ? "—"
+                  : "登录后查看"
             }
             accent="destructive"
             icon={AlertTriangle}
@@ -264,7 +285,15 @@ export default function DashboardPage() {
               <CardDescription>手动任务优先于定时任务；重任务进入持久化队列执行</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <JobActions onStarted={load} />
+              {!authenticated && !sessionLoading ? (
+                <AuthRequired
+                  compact
+                  title="需要登录后运行任务"
+                  description="采集、测速与 AI 探测任务需要 operator 及以上权限。"
+                />
+              ) : (
+                <JobActions onStarted={load} />
+              )}
               {activeJob ? (
                 <div className="border border-primary/30 bg-primary/5 p-4">
                   <div className="mb-2 flex items-center justify-between gap-3 text-sm">
@@ -407,8 +436,11 @@ export default function DashboardPage() {
                   </p>
                 </div>
               ))}
-              {alerts.length === 0 && (
+              {alertsVisible && alerts.length === 0 && (
                 <CardEmpty className="text-success/80">当前没有活跃异常</CardEmpty>
+              )}
+              {!alertsVisible && !sessionLoading && (
+                <AuthRequired compact title="需要登录" description="活跃告警与值班处理属于管理面。" />
               )}
             </CardContent>
           </Card>
