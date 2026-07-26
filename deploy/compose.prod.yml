@@ -17,6 +17,13 @@ x-app-environment: &app-environment
   NODE_HARVEST_SINGBOX: /app/bin/sing-box
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
 
+# 运行配置必须显式挂载：镜像里那份会随每次镜像更新被覆盖，而 security.*
+# 一类设置又不在热配置 API 的可改范围内，不挂载就只能重建镜像才能调整。
+x-app-volumes: &app-volumes
+  - app-data:/app/data
+  - app-output:/app/output
+  - ../configs/config.yaml:/app/configs/config.yaml:ro
+
 x-app-security: &app-security
   read_only: true
   cap_drop: [ALL]
@@ -73,9 +80,9 @@ services:
       <<: *app-environment
       NODE_HARVEST_EMBEDDED_WORKERS: "0"
       NODE_HARVEST_SCHEDULE: "1"
-    volumes:
-      - app-data:/app/data
-      - app-output:/app/output
+      # 订阅客户端若只支持 URL 携带 token（Clash、Resin 等），置 1 放开 ?token=
+      NODE_HARVEST_ALLOW_QUERY_TOKEN: ${NODE_HARVEST_ALLOW_QUERY_TOKEN:-0}
+    volumes: *app-volumes
     <<: *app-security
     depends_on:
       postgres:
@@ -97,9 +104,7 @@ services:
     command: [-config, /app/configs/config.yaml, -workers, "${WORKER_CONCURRENCY:-2}"]
     environment:
       <<: *app-environment
-    volumes:
-      - app-data:/app/data
-      - app-output:/app/output
+    volumes: *app-volumes
     <<: *app-security
     depends_on:
       postgres:

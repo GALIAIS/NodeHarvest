@@ -575,13 +575,13 @@ func (c *Config) normalize() {
 	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_ADMIN_TOKEN")); v != "" {
 		c.Security.AdminToken = v
 	}
-	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_SCHEDULE")); v != "" {
-		switch strings.ToLower(v) {
-		case "1", "true", "on", "yes", "enable", "enabled":
-			c.Schedule.Enabled = true
-		case "0", "false", "off", "no", "disable", "disabled":
-			c.Schedule.Enabled = false
-		}
+	if v, ok := envBool("NODE_HARVEST_SCHEDULE"); ok {
+		c.Schedule.Enabled = v
+	}
+	// 多数订阅客户端（Clash、Resin 等）只能把 token 放进 URL，需要按部署放开，
+	// 否则只能重建镜像才能改动这一项。
+	if v, ok := envBool("NODE_HARVEST_ALLOW_QUERY_TOKEN"); ok {
+		c.Security.AllowQueryToken = v
 	}
 	for i := range c.Sources {
 		if c.Sources[i].Type == "" {
@@ -597,6 +597,18 @@ func (c *Config) normalize() {
 			c.Sources[i].MaxBytes = 32 << 20
 		}
 	}
+}
+
+// envBool 解析部署常用的布尔环境变量；第二个返回值表示该变量是否已显式设置，
+// 未设置或取值无法识别时保持配置文件中的原值。
+func envBool(key string) (value bool, set bool) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "on", "yes", "enable", "enabled":
+		return true, true
+	case "0", "false", "off", "no", "disable", "disabled":
+		return false, true
+	}
+	return false, false
 }
 
 func (c *Config) FetchTimeout() time.Duration {

@@ -148,10 +148,40 @@ sudo APP_DIR=/opt/nodeharvest bash deploy/rollback.sh VERSION
 | `NODE_HARVEST_OBJECT_STORE_ACCESS_KEY` | 对象存储 access key |
 | `NODE_HARVEST_OBJECT_STORE_SECRET_KEY` | 对象存储 secret |
 | `NODE_HARVEST_ALERT_WEBHOOK_SECRET` | 告警 HMAC secret |
+| `NODE_HARVEST_ALLOW_QUERY_TOKEN` | 是否允许 `?token=` 携带订阅凭据，默认 `0` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP endpoint |
 
 非密钥运行配置位于 `configs/config.yaml`。热配置只允许更新发布阈值、源治理阈值
 和质量后真实拨测策略；拓扑、凭证、监听和数据库变更需滚动重启。
+
+### 运行配置务必挂载
+
+容器以 `-config configs/config.yaml` 启动，读的是**镜像内置的那份**。若不把宿主机
+的配置挂载进去，每次镜像更新都会静默回到镜像里的默认值，而 `security.*` 一类设置
+又不在热配置 API 的可改范围内（见 `internal/config/runtime.go`），届时只能重建镜像
+才能改动。`deploy/compose.prod.yml` 与 `deploy/docker-compose.yml` 均已声明该只读挂载，
+用 `docker run` 手工部署时请自行补上：
+
+```bash
+-v /opt/nodeharvest/configs/config.yaml:/app/configs/config.yaml:ro
+```
+
+### 订阅凭据的传递方式
+
+`security.allow_query_token` 默认 `false`，此时 `?token=` 会被拒绝（401），客户端需改用
+请求头：
+
+```bash
+curl -H "X-Sub-Token: $TOKEN" https://<domain>/sub/raw
+curl -H "Authorization: Bearer $TOKEN" https://<domain>/sub/raw
+```
+
+但多数订阅客户端（Clash、代理池等）只能把凭据放进 URL。这类场景把
+`NODE_HARVEST_ALLOW_QUERY_TOKEN` 设为 `1`（或在配置文件里置 `true`）放开，
+代价是 token 会进入访问日志、浏览器历史与 Referer，应配合定期轮换。
+
+**症状**：该项被关闭后，所有 `?token=` 订阅立即 401，下游代理池会冻结在上一次成功
+拉取的快照上而不报错，容易被误判成"还在正常工作"。
 
 ## 发布流水线
 
