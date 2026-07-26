@@ -1,6 +1,14 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { usePathname } from "next/navigation";
 import { api, type SessionInfo } from "@/lib/api";
 
@@ -31,40 +39,45 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  // Monotonic ticket: only the newest probe may write state, so a slow response
+  // from a previous route (or a manual refresh) can never clobber a newer one.
+  const latest = useRef(0);
 
-  const refresh = useCallback(async () => {
-    try {
-      setSession(await api.me());
-    } catch {
-      setSession(null);
-    } finally {
-      setLoading(false);
-    }
+  // Single place where a probe result is allowed to become state, so the
+  // effect and the manual refresh cannot drift apart.
+  const commit = useCallback((ticket: number, next: SessionInfo | null) => {
+    if (ticket !== latest.current) return;
+    setSession(next);
+    setLoading(false);
   }, []);
 
-  // Re-probe on navigation. State only ever lands in a promise callback, and the
-  // cancelled flag keeps a stale response from overwriting a newer one.
+  const probe = useCallback(() => {
+    const ticket = ++latest.current;
+    return api.me().then(
+      (next) => commit(ticket, next),
+      () => commit(ticket, null),
+    );
+  }, [commit]);
+
   useEffect(() => {
     let cancelled = false;
-    api
-      .me()
-      .then((next) => {
-        if (!cancelled) setSession(next);
-      })
-      .catch(() => {
-        if (!cancelled) setSession(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    const ticket = ++latest.current;
+    api.me().then(
+      (next) => {
+        if (!cancelled) commit(ticket, next);
+      },
+      () => {
+        if (!cancelled) commit(ticket, null);
+      },
+    );
     return () => {
       cancelled = true;
     };
-  }, [pathname]);
+  }, [commit, pathname]);
 
   const value = useMemo<SessionState>(() => {
     const authenticated = Boolean(session?.authenticated);
-    const role = authenticated ? session!.principal.role : null;
+    const role = authenticated && session ? session.principal.role : null;
     return {
       session,
       loading,
@@ -72,9 +85,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       role,
       canOperate: role === "operator" || role === "admin",
       canAdmin: role === "admin",
-      refresh,
+      refresh: probe,
     };
-  }, [session, loading, refresh]);
+  }, [session, loading, probe]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

@@ -19,6 +19,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardEmpty, CardHeader, CardTitle } from "@/components/ui/card";
+import { Hint } from "@/components/ui/hint";
 import { Progress } from "@/components/ui/progress";
 import { cn, formatTime } from "@/lib/utils";
 
@@ -134,9 +135,11 @@ export default function JobsPage() {
         title="任务与事件中心"
         description="任务写入持久化优先级队列，由独立 Worker 租约执行；事件时间线持续轮询，可追踪重试、失败与取消。"
         actions={
-          <Button variant="secondary" size="sm" onClick={load}>
-            <RefreshCw className="size-3.5" /> 刷新
-          </Button>
+          <Hint content="登录后可用" disabled={needsLogin}>
+            <Button variant="secondary" size="sm" onClick={load} disabled={needsLogin}>
+              <RefreshCw className="size-3.5" /> 刷新
+            </Button>
+          </Hint>
         }
       />
 

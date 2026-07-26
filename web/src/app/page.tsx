@@ -17,6 +17,7 @@ import {
 import {
   api,
   errorMessage,
+  isAuthError,
   type AlertRecord,
   type CountryRow,
   type DailyMetric,
@@ -76,7 +77,7 @@ type Schedule = {
 const GRADES = ["S", "A", "B", "C", "D", "F"] as const;
 
 export default function DashboardPage() {
-  const { authenticated, loading: sessionLoading } = useSession();
+  const { authenticated, canOperate, loading: sessionLoading } = useSession();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -122,12 +123,20 @@ export default function DashboardPage() {
     if (jobResult.status === "fulfilled") setJobs(jobResult.value?.jobs ?? []);
     // 判定依据是"这次请求是否被允许"，而不是返回值真假：无告警时后端
     // 返回 JSON null，若按真值判断会把"已登录且零告警"误判成"未登录"。
-    if (authenticated && alertResult.status === "fulfilled") {
-      setAlerts(alertResult.value ?? []);
-      setAlertsVisible(true);
-    } else {
+    if (!authenticated) {
       setAlerts([]);
       setAlertsVisible(false);
+    } else if (alertResult.status === "fulfilled") {
+      setAlerts(alertResult.value ?? []);
+      setAlertsVisible(true);
+    } else if (isAuthError(alertResult.reason)) {
+      // 会话中途失效导致的 401/403 才收起管理面板块
+      setAlerts([]);
+      setAlertsVisible(false);
+    } else {
+      // 后端故障或网络抖动：保留上一轮告警与可见状态，仅提示错误，
+      // 避免把服务端异常误判成"未登录"。
+      setErr(errorMessage(alertResult.reason, "告警数据拉取失败"));
     }
   }, [authenticated]);
 
@@ -285,14 +294,21 @@ export default function DashboardPage() {
               <CardDescription>手动任务优先于定时任务；重任务进入持久化队列执行</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {!authenticated && !sessionLoading ? (
+              {sessionLoading || canOperate ? (
+                <JobActions onStarted={load} />
+              ) : authenticated ? (
+                <AuthRequired
+                  compact
+                  reason="forbidden"
+                  title="当前角色无法运行任务"
+                  description="采集、测速与 AI 探测任务需要 operator 及以上权限。"
+                />
+              ) : (
                 <AuthRequired
                   compact
                   title="需要登录后运行任务"
                   description="采集、测速与 AI 探测任务需要 operator 及以上权限。"
                 />
-              ) : (
-                <JobActions onStarted={load} />
               )}
               {activeJob ? (
                 <div className="border border-primary/30 bg-primary/5 p-4">

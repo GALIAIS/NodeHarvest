@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, Loader2, Play, Radar, Sparkles, Zap } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, type ButtonProps } from "@/components/ui/button";
 
@@ -23,9 +23,11 @@ const actions: Array<{
 export function JobActions({
   onStarted,
   className,
+  disabled = false,
 }: {
   onStarted?: (jobId: string) => void;
   className?: string;
+  disabled?: boolean;
 }) {
   const [loading, setLoading] = useState<Kind | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +47,7 @@ export function JobActions({
               : await api.startAI(opts);
       onStarted?.(job.id);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "启动失败");
+      setError(errorMessage(cause, "启动失败"));
     } finally {
       setLoading(null);
     }
@@ -59,7 +61,7 @@ export function JobActions({
             key={kind}
             variant={variant}
             onClick={() => run(kind)}
-            disabled={loading !== null}
+            disabled={disabled || loading !== null}
           >
             {loading === kind ? <Loader2 className="size-4 animate-spin" /> : <Icon className="size-4" />}
             {label}

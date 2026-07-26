@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AlertOctagon, AlertTriangle, CheckCheck, RefreshCw, ShieldCheck } from "lucide-react";
-import { api, errorMessage, isAuthError, type AlertRecord } from "@/lib/api";
+import { api, errorMessage, isForbidden, isUnauthenticated, type AlertRecord } from "@/lib/api";
 import { AuthRequired } from "@/components/auth-required";
 import { PageHeader } from "@/components/page-header";
 import { useSession } from "@/components/session-provider";
@@ -10,6 +10,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardEmpty } from "@/components/ui/card";
+import { Hint } from "@/components/ui/hint";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn, formatTime } from "@/lib/utils";
@@ -20,7 +21,7 @@ export default function AlertsPage() {
   const [activeOnly, setActiveOnly] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [authBlocked, setAuthBlocked] = useState(false);
+  const [authBlocked, setAuthBlocked] = useState<null | "anonymous" | "forbidden">(null);
 
   const load = useCallback(async () => {
     // The alerts feed is admin-only; anonymous requests would just 401.
@@ -28,10 +29,13 @@ export default function AlertsPage() {
     try {
       setAlerts(await api.alerts(activeOnly));
       setError("");
-      setAuthBlocked(false);
+      setAuthBlocked(null);
     } catch (cause) {
-      if (isAuthError(cause)) {
-        setAuthBlocked(true);
+      if (isForbidden(cause)) {
+        setAuthBlocked("forbidden");
+        setError("");
+      } else if (isUnauthenticated(cause)) {
+        setAuthBlocked("anonymous");
         setError("");
       } else {
         setError(errorMessage(cause, "加载失败"));
@@ -40,14 +44,15 @@ export default function AlertsPage() {
   }, [activeOnly, authenticated]);
 
   useEffect(() => {
-    if (!authenticated) return;
+    // Stop polling once an auth failure surfaced, or it would retry forever.
+    if (!authenticated || authBlocked) return;
     const initial = setTimeout(load, 0);
     const timer = setInterval(load, 10000);
     return () => {
       clearTimeout(initial);
       clearInterval(timer);
     };
-  }, [load, authenticated]);
+  }, [load, authenticated, authBlocked]);
 
   async function change(alert: AlertRecord, action: "acknowledge" | "resolve") {
     setBusy(`${alert.id}:${action}`);
@@ -55,8 +60,11 @@ export default function AlertsPage() {
       await api.changeAlert(alert.id, action);
       await load();
     } catch (cause) {
-      if (isAuthError(cause)) {
-        setAuthBlocked(true);
+      if (isForbidden(cause)) {
+        setAuthBlocked("forbidden");
+        setError("");
+      } else if (isUnauthenticated(cause)) {
+        setAuthBlocked("anonymous");
         setError("");
       } else {
         setError(errorMessage(cause, "操作失败"));
@@ -66,7 +74,7 @@ export default function AlertsPage() {
     }
   }
 
-  const needsLogin = (!authenticated && !sessionLoading) || authBlocked;
+  const needsLogin = (!authenticated && !sessionLoading) || authBlocked !== null;
 
   const critical = alerts.filter((alert) => alert.active && alert.severity === "critical").length;
 
@@ -79,35 +87,36 @@ export default function AlertsPage() {
         actions={
           <>
             <div className="flex items-center gap-2">
-              <Switch
-                id="alerts-active-only"
-                checked={activeOnly}
-                onCheckedChange={setActiveOnly}
-                disabled={!authenticated}
-                title={authenticated ? undefined : "登录后可用"}
-              />
+              <Hint content="登录后可用" disabled={!authenticated}>
+                <Switch
+                  id="alerts-active-only"
+                  checked={activeOnly}
+                  onCheckedChange={setActiveOnly}
+                  disabled={!authenticated}
+                />
+              </Hint>
               <Label htmlFor="alerts-active-only">仅活跃</Label>
             </div>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={load}
-              disabled={!authenticated}
-              title={authenticated ? undefined : "登录后可用"}
-            >
-              <RefreshCw className="size-3.5" />
-              刷新
-            </Button>
+            <Hint content="登录后可用" disabled={!authenticated}>
+              <Button size="sm" variant="secondary" onClick={load} disabled={!authenticated}>
+                <RefreshCw className="size-3.5" />
+                刷新
+              </Button>
+            </Hint>
           </>
         }
       />
 
       <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
         {needsLogin ? (
-          <AuthRequired
-            title="告警台需要登录"
-            description="异常告警与确认/解决操作属于管理面，登录后可查看。"
-          />
+          authBlocked === "forbidden" ? (
+            <AuthRequired reason="forbidden" />
+          ) : (
+            <AuthRequired
+              title="告警台需要登录"
+              description="异常告警与确认/解决操作属于管理面，登录后可查看。"
+            />
+          )
         ) : (
           <>
             <div className="grid gap-3 sm:grid-cols-3">

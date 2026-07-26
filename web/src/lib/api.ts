@@ -295,14 +295,28 @@ export class ApiError extends Error {
   }
 }
 
-/** True when the request failed only because the caller lacks credentials. */
-export function isAuthError(cause: unknown): boolean {
-  return cause instanceof ApiError && (cause.status === 401 || cause.status === 403);
+/** 401 — the caller is not signed in at all. */
+export function isUnauthenticated(cause: unknown): boolean {
+  return cause instanceof ApiError && cause.status === 401;
 }
 
-/** Human-readable message for a failed request, without leaking raw 401 bodies. */
+/** 403 — signed in, but the role is not allowed to do this. */
+export function isForbidden(cause: unknown): boolean {
+  return cause instanceof ApiError && cause.status === 403;
+}
+
+/** True when the request failed only because the caller lacks credentials. */
+export function isAuthError(cause: unknown): boolean {
+  return isUnauthenticated(cause) || isForbidden(cause);
+}
+
+/**
+ * Human-readable message for a failed request. 401 and 403 need different
+ * wording — telling a signed-in operator to "log in" sends them in circles.
+ */
 export function errorMessage(cause: unknown, fallback = "请求失败"): string {
-  if (isAuthError(cause)) return "需要登录后才能访问";
+  if (isForbidden(cause)) return "当前账号的角色无权执行此操作";
+  if (isUnauthenticated(cause)) return "需要登录后才能访问";
   if (cause instanceof Error && cause.message.trim()) return cause.message;
   return fallback;
 }
@@ -350,24 +364,39 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  logout: () => request<{ authenticated: boolean }>("/api/v1/auth/logout", { method: "POST" }),
+  // Clearing the tab-local admin token is part of signing out: leaving it in
+  // place keeps request() sending X-Admin-Token, so /auth/me stays
+  // authenticated and the login page bounces straight back to the console.
+  logout: async () => {
+    try {
+      return await request<{ authenticated: boolean }>("/api/v1/auth/logout", { method: "POST" });
+    } finally {
+      clearAdminToken();
+    }
+  },
   stats: () => request<DashboardStats>("/api/stats"),
   trends: (days = 30) => requestList<DailyMetric>(`/api/stats/trends?days=${days}`),
-  nodes: (values: Record<string, string | number | boolean | undefined> = {}) =>
-    request<{
+  nodes: async (values: Record<string, string | number | boolean | undefined> = {}) => {
+    const page = await request<{
       total: number;
       count: number;
-      nodes: NodeItem[];
+      nodes: NodeItem[] | null;
       next_cursor: string;
       has_more: boolean;
-    }>(`/api/nodes${params(values)}`),
+    }>(`/api/nodes${params(values)}`);
+    return { ...page, nodes: page.nodes ?? [] };
+  },
   node: (id: string) => request<NodeItem>(`/api/nodes/${encodeURIComponent(id)}`),
   nodeMetrics: (id: string, days = 30) =>
     requestList<DailyMetric>(`/api/nodes/${encodeURIComponent(id)}/metrics?days=${days}`),
-  jobs: (values: Record<string, string | number | boolean | undefined> = {}) =>
-    request<{ jobs: Job[]; next_cursor: string; has_more: boolean }>(
+  // `jobs` is a nil slice server-side until the first job runs, so a fresh
+  // install answers {"jobs": null} and every caller indexing it would throw.
+  jobs: async (values: Record<string, string | number | boolean | undefined> = {}) => {
+    const page = await request<{ jobs: Job[] | null; next_cursor: string; has_more: boolean }>(
       `/api/jobs${params(values)}`,
-    ),
+    );
+    return { ...page, jobs: page.jobs ?? [] };
+  },
   job: (id: string) => request<Job>(`/api/jobs/${encodeURIComponent(id)}`),
   jobEvents: (id: string, after = 0) =>
     requestList<JobEvent>(`/api/jobs/${encodeURIComponent(id)}/events?after=${after}`),
@@ -402,10 +431,14 @@ export const api = {
     request<{ state: Source }>(`/api/admin/sources/${encodeURIComponent(name)}/probe`, {
       method: "POST",
     }),
-  countries: (values: Record<string, string | number | boolean | undefined> = {}) =>
-    request<{ total_countries: number; total_nodes: number; countries: CountryRow[] }>(
-      `/api/countries${params(values)}`,
-    ),
+  countries: async (values: Record<string, string | number | boolean | undefined> = {}) => {
+    const page = await request<{
+      total_countries: number;
+      total_nodes: number;
+      countries: CountryRow[] | null;
+    }>(`/api/countries${params(values)}`);
+    return { ...page, countries: page.countries ?? [] };
+  },
   aiTargets: () => requestList<AITarget>("/api/ai/targets"),
   hostAI: () => request<Record<string, AIProbeResult>>("/api/ai/host"),
   config: () => request<Record<string, unknown>>("/api/config"),
@@ -450,6 +483,11 @@ export const api = {
 
 export function setAdminToken(token: string) {
   window.sessionStorage.setItem("nodeharvest-admin-token", token.trim());
+}
+
+export function clearAdminToken() {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem("nodeharvest-admin-token");
 }
 
 export function getAdminToken() {

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, Check, Copy, Download, FileJson, Link2, Radio } from "lucide-react";
 import {
   api,
+  ApiError,
   errorMessage,
   exportBase64Url,
   exportRawUrl,
@@ -34,7 +35,7 @@ const unset = (value: string) => (value === ALL ? "" : value);
 function DownloadHint() {
   return (
     <p className="text-[10px] leading-4 text-muted-foreground">
-      导出接口需要登录；下方的公开订阅端点无需登录即可使用。
+      导出接口需要登录；页首的公开订阅端点无需登录即可使用。
     </p>
   );
 }
@@ -114,7 +115,8 @@ export default function ExportPage() {
         cache: "no-store",
       });
       if (!res.ok) {
-        throw new Error((await res.text()) || res.statusText);
+        // 保留状态码，errorMessage 才能把 401/403 翻译成友好提示
+        throw new ApiError(res.status, (await res.text()) || res.statusText);
       }
       const href = URL.createObjectURL(await res.blob());
       const link = document.createElement("a");

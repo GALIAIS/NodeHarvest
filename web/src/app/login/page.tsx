@@ -3,7 +3,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowRight, KeyRound, LockKeyhole, ShieldCheck } from "lucide-react";
-import { api, getAdminToken, setAdminToken } from "@/lib/api";
+import { api, errorMessage, getAdminToken, setAdminToken } from "@/lib/api";
+import { useSession } from "@/components/session-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,6 +13,7 @@ import { Field } from "@/components/ui/label";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { refresh } = useSession();
   const [tenant, setTenant] = useState("default");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -38,10 +40,14 @@ export default function LoginPage() {
     setError("");
     try {
       await api.login({ tenant, username, password });
+      // Let the shared session re-probe /auth/me before navigating, so the
+      // landing page's first frame already renders as authenticated instead
+      // of flashing anonymous panels for one paint.
+      await refresh();
       router.replace("/");
       router.refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "登录失败");
+      setError(errorMessage(cause, "登录失败"));
     } finally {
       setBusy(false);
     }
@@ -54,10 +60,13 @@ export default function LoginPage() {
     try {
       const session = await api.me();
       if (!session.authenticated) throw new Error("管理 Token 无效");
+      // Same as the password flow: settle the shared session first so the
+      // console does not flash its anonymous state after the redirect.
+      await refresh();
       router.replace("/");
       router.refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "管理 Token 无效");
+      setError(errorMessage(cause, "管理 Token 无效"));
     } finally {
       setBusy(false);
     }

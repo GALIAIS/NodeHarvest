@@ -96,7 +96,7 @@ function NavItem({
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { session, authenticated, loading, refresh } = useSession();
+  const { session, authenticated, loading } = useSession();
 
   if (pathname === "/login") return null;
 
@@ -162,12 +162,13 @@ export function Sidebar() {
                     variant="ghost"
                     size="icon-sm"
                     aria-label="退出登录"
-                    onClick={() =>
-                      api
-                        .logout()
-                        .then(refresh)
-                        .then(() => window.location.assign("/login"))
-                    }
+                    onClick={() => {
+                      // A full navigation remounts the provider, so refreshing
+                      // the session here first would only add a round trip.
+                      // api.logout() clears the tab-local admin token even if
+                      // the request itself fails.
+                      void api.logout().finally(() => window.location.assign("/login"));
+                    }}
                     className="hover:text-destructive"
                   >
                     <LogOut className="size-4" />

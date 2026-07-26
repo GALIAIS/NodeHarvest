@@ -11,7 +11,15 @@ import {
   Save,
   ServerCog,
 } from "lucide-react";
-import { api, errorMessage, isAuthError, type ConfigVersion, type Health } from "@/lib/api";
+import {
+  api,
+  errorMessage,
+  isAuthError,
+  isForbidden,
+  isUnauthenticated,
+  type ConfigVersion,
+  type Health,
+} from "@/lib/api";
 import { AuthRequired } from "@/components/auth-required";
 import { PageHeader } from "@/components/page-header";
 import { useSession } from "@/components/session-provider";
@@ -26,6 +34,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
 import { Field, Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -60,7 +69,7 @@ const empty: RuntimeForm = {
 };
 
 export default function SystemPage() {
-  const { authenticated, loading: sessionLoading } = useSession();
+  const { authenticated, canAdmin, loading: sessionLoading } = useSession();
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [health, setHealth] = useState<Health | null>(null);
   const [ready, setReady] = useState<{ ready: boolean; reasons: string[] } | null>(null);
@@ -70,6 +79,9 @@ export default function SystemPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  // 401/403 是会话或角色状态而非故障，单独记录以渲染 AuthRequired 而非报错横幅。
+  // 会话可能在页面停留期间过期，所以即便 canAdmin 为 true 也要处理。
+  const [authError, setAuthError] = useState<"anonymous" | "forbidden" | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -103,16 +115,24 @@ export default function SystemPage() {
     }
     // Version history is admin-only; fetch it separately so its failure
     // never clears the public config/health/ready state above.
-    if (!authenticated) {
+    if (!canAdmin) {
       setVersions([]);
+      setAuthError(null);
       return;
     }
     try {
       setVersions(await api.configVersions());
+      setAuthError(null);
     } catch (cause) {
-      if (!isAuthError(cause)) setError(errorMessage(cause, "加载失败"));
+      if (isAuthError(cause)) {
+        // 会话过期或角色被降级：清空过期的版本列表并展示对应的登录/权限提示。
+        setVersions([]);
+        setAuthError(isForbidden(cause) ? "forbidden" : "anonymous");
+      } else {
+        setError(errorMessage(cause, "加载失败"));
+      }
     }
-  }, [authenticated]);
+  }, [canAdmin]);
 
   useEffect(() => {
     const initial = setTimeout(load, 0);
@@ -132,6 +152,7 @@ export default function SystemPage() {
     setBusy(true);
     setError("");
     setMessage("");
+    setAuthError(null);
     const patch = Object.fromEntries(
       Object.entries(form).map(([key, value]) => [
         key,
@@ -144,7 +165,9 @@ export default function SystemPage() {
       setConfirm("");
       await load();
     } catch (cause) {
-      if (!isAuthError(cause)) setError(errorMessage(cause, "保存失败"));
+      if (isUnauthenticated(cause)) setAuthError("anonymous");
+      else if (isForbidden(cause)) setAuthError("forbidden");
+      else setError(errorMessage(cause, "保存失败"));
     } finally {
       setBusy(false);
     }
@@ -230,6 +253,17 @@ export default function SystemPage() {
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
+        {authError && (
+          <AuthRequired
+            reason={authError}
+            title={authError === "forbidden" ? "需要 admin 角色" : "登录状态已失效"}
+            description={
+              authError === "forbidden"
+                ? "运行时配置的变更需要管理员权限，请联系管理员调整角色。"
+                : "会话已过期，请重新登录后再操作。"
+            }
+          />
+        )}
         {message && (
           <Alert variant="success" role="status">
             <CheckCircle2 />
@@ -250,6 +284,13 @@ export default function SystemPage() {
                   title="需要登录后修改"
                   description="运行时配置的变更会写入审计与配置版本。"
                 />
+              ) : authenticated && !canAdmin ? (
+                <AuthRequired
+                  compact
+                  reason="forbidden"
+                  title="需要 admin 角色"
+                  description="运行时配置的变更会写入审计与配置版本。"
+                />
               ) : (
               <form onSubmit={save} className="space-y-6">
                 <fieldset>
@@ -265,7 +306,7 @@ export default function SystemPage() {
                         max="100"
                         value={form.publish_min_score}
                         onChange={(e) => field("publish_min_score", e.target.value)}
-                        disabled={!authenticated}
+                        disabled={!canAdmin}
                       />
                     </Field>
                     <Field label="最多节点" htmlFor="publish_max_nodes">
@@ -276,7 +317,7 @@ export default function SystemPage() {
                         max="100000"
                         value={form.publish_max_nodes}
                         onChange={(e) => field("publish_max_nodes", e.target.value)}
-                        disabled={!authenticated}
+                        disabled={!canAdmin}
                       />
                     </Field>
                     <Field label="缓存秒数" htmlFor="publish_cache_sec">
@@ -287,7 +328,7 @@ export default function SystemPage() {
                         max="86400"
                         value={form.publish_cache_sec}
                         onChange={(e) => field("publish_cache_sec", e.target.value)}
-                        disabled={!authenticated}
+                        disabled={!canAdmin}
                       />
                     </Field>
                     <Field label="最大节点年龄（小时）" htmlFor="publish_max_node_age_hours">
@@ -298,7 +339,7 @@ export default function SystemPage() {
                         max="8760"
                         value={form.publish_max_node_age_hours}
                         onChange={(e) => field("publish_max_node_age_hours", e.target.value)}
-                        disabled={!authenticated}
+                        disabled={!canAdmin}
                       />
                     </Field>
                   </div>
@@ -307,7 +348,7 @@ export default function SystemPage() {
                       id="publish_alive_only"
                       checked={form.publish_alive_only}
                       onCheckedChange={(state) => field("publish_alive_only", state)}
-                      disabled={!authenticated}
+                      disabled={!canAdmin}
                     />
                     <Label htmlFor="publish_alive_only">仅发布存活节点</Label>
                   </div>
@@ -326,7 +367,7 @@ export default function SystemPage() {
                         max="100"
                         value={form.governance_disable_after_failures}
                         onChange={(e) => field("governance_disable_after_failures", e.target.value)}
-                        disabled={!authenticated}
+                        disabled={!canAdmin}
                       />
                     </Field>
                     <Field label="冷却小时" htmlFor="governance_cooldown_hours">
@@ -337,7 +378,7 @@ export default function SystemPage() {
                         max="720"
                         value={form.governance_cooldown_hours}
                         onChange={(e) => field("governance_cooldown_hours", e.target.value)}
-                        disabled={!authenticated}
+                        disabled={!canAdmin}
                       />
                     </Field>
                     <Field label="HQ 骤降阈值 %" htmlFor="governance_hq_drop_percent">
@@ -348,7 +389,7 @@ export default function SystemPage() {
                         max="100"
                         value={form.governance_hq_drop_percent}
                         onChange={(e) => field("governance_hq_drop_percent", e.target.value)}
-                        disabled={!authenticated}
+                        disabled={!canAdmin}
                       />
                     </Field>
                     <Field label="单国家占比阈值 %" htmlFor="governance_country_share_percent">
@@ -359,7 +400,7 @@ export default function SystemPage() {
                         max="100"
                         value={form.governance_country_share_percent}
                         onChange={(e) => field("governance_country_share_percent", e.target.value)}
-                        disabled={!authenticated}
+                        disabled={!canAdmin}
                       />
                     </Field>
                   </div>
@@ -375,7 +416,7 @@ export default function SystemPage() {
                         id="dial_after_quality"
                         checked={form.dial_after_quality}
                         onCheckedChange={(state) => field("dial_after_quality", state)}
-                        disabled={!authenticated}
+                        disabled={!canAdmin}
                       />
                       <Label htmlFor="dial_after_quality">质量任务后抽样真实拨测</Label>
                     </div>
@@ -391,7 +432,7 @@ export default function SystemPage() {
                         max="100000"
                         value={form.dial_after_quality_max}
                         onChange={(e) => field("dial_after_quality_max", e.target.value)}
-                        disabled={!authenticated}
+                        disabled={!canAdmin}
                       />
                     </Field>
                   </div>
@@ -409,17 +450,18 @@ export default function SystemPage() {
                       value={confirm}
                       onChange={(e) => setConfirm(e.target.value)}
                       autoComplete="off"
-                      disabled={!authenticated}
+                      disabled={!canAdmin}
                     />
                   </Field>
-                  <Button
-                    type="submit"
-                    variant="destructive"
-                    disabled={busy || confirm !== "APPLY" || !authenticated}
-                    title={!authenticated ? "需要登录后才能应用配置" : undefined}
-                  >
-                    <Save className="size-4" /> {busy ? "应用中…" : "应用配置"}
-                  </Button>
+                  <Hint content="需要 admin 角色才能应用配置" disabled={!canAdmin}>
+                    <Button
+                      type="submit"
+                      variant="destructive"
+                      disabled={busy || confirm !== "APPLY" || !canAdmin}
+                    >
+                      <Save className="size-4" /> {busy ? "应用中…" : "应用配置"}
+                    </Button>
+                  </Hint>
                 </div>
               </form>
               )}
@@ -459,6 +501,14 @@ export default function SystemPage() {
                 {!authenticated && !sessionLoading && (
                   <AuthRequired compact title="需要登录" description="配置版本历史属于管理面。" />
                 )}
+                {authenticated && !canAdmin && (
+                  <AuthRequired
+                    compact
+                    reason="forbidden"
+                    title="需要 admin 角色"
+                    description="配置版本历史仅对管理员开放。"
+                  />
+                )}
                 {versions.map((version) => (
                   <div key={version.id} className="border-l-2 border-border pl-3">
                     <div className="flex items-center justify-between gap-2">
@@ -478,7 +528,7 @@ export default function SystemPage() {
                     </details>
                   </div>
                 ))}
-                {versions.length === 0 && authenticated && (
+                {versions.length === 0 && canAdmin && (
                   <CardEmpty>暂无热更新版本</CardEmpty>
                 )}
               </CardContent>

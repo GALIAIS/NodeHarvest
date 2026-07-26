@@ -28,7 +28,7 @@ import {
 import { formatMs } from "@/lib/utils";
 
 export default function AIPage() {
-  const { loading: sessionLoading, canOperate } = useSession();
+  const { loading: sessionLoading, authenticated, canOperate } = useSession();
   const [targets, setTargets] = useState<AITarget[]>([]);
   const [hostAI, setHostAI] = useState<Record<string, AIProbeResult>>({});
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -97,6 +97,14 @@ export default function AIPage() {
           <CardContent>
             {sessionLoading || canOperate ? (
               <JobActions onStarted={() => load()} />
+            ) : authenticated ? (
+              // 已登录但角色不足：不能再引导去登录页，那只会绕回来
+              <AuthRequired
+                compact
+                reason="forbidden"
+                title="当前角色无法运行任务"
+                description="AI 探测任务需要 operator 及以上权限。运行结果无需登录即可查看。"
+              />
             ) : (
               <AuthRequired
                 compact
