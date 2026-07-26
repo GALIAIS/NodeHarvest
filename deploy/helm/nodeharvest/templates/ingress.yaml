@@ -1,0 +1,55 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "nodeharvest.fullname" . }}-public
+  labels:
+    {{- include "nodeharvest.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.hosts.public | quote }}]
+      secretName: {{ .Values.ingress.tls.publicSecret }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.hosts.public | quote }}
+      http:
+        paths:
+          {{- range $path := list "/sub" "/api/sub" "/api/health" "/api/ready" "/api/version" "/api/terms" }}
+          - path: {{ $path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "nodeharvest.fullname" $ }}
+                port: {name: http}
+          {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "nodeharvest.fullname" . }}-admin
+  labels:
+    {{- include "nodeharvest.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.hosts.admin | quote }}]
+      secretName: {{ .Values.ingress.tls.adminSecret }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.hosts.admin | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "nodeharvest.fullname" . }}
+                port: {name: http}
+{{- end }}

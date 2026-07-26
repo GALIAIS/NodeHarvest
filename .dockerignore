@@ -1,0 +1,17 @@
+.git
+.github
+.vscode
+.idea
+bin
+data
+logs
+output
+web/node_modules
+web/.next
+web/out
+*.log
+*.db
+*.db-*
+*.mmdb
+.env
+.env.*

@@ -22,28 +22,40 @@ type Result struct {
 	CountryName string // 英文名
 	City        string
 	ISP         string // 可选，Country DB 通常为空
+	ASN         string
 	Source      string // mmdb | name | cache
 }
 
 // Locator IP/域名 → 国家
 type Locator struct {
-	mu     sync.RWMutex
-	db     *geoip2.Reader
-	dbPath string
-	cache  map[string]Result // key: lower host or IP
+	mu        sync.RWMutex
+	db        *geoip2.Reader
+	asnDB     *geoip2.Reader
+	dbPath    string
+	asnDBPath string
+	cache     map[string]Result // key: lower host or IP
 }
 
 // DefaultDBURL 公开 GeoLite2-Country 镜像（可被配置覆盖）
 const DefaultDBURL = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb"
+const DefaultASNDBURL = "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-ASN.mmdb"
 
 // New 创建定位器；dbPath 为空则用 data/GeoLite2-Country.mmdb
 func New(dbPath string) *Locator {
+	return NewWithASN(dbPath, "")
+}
+
+func NewWithASN(dbPath, asnDBPath string) *Locator {
 	if dbPath == "" {
 		dbPath = filepath.Join("data", "GeoLite2-Country.mmdb")
 	}
+	if asnDBPath == "" {
+		asnDBPath = filepath.Join(filepath.Dir(dbPath), "GeoLite2-ASN.mmdb")
+	}
 	return &Locator{
-		dbPath: dbPath,
-		cache:  make(map[string]Result),
+		dbPath:    dbPath,
+		asnDBPath: asnDBPath,
+		cache:     make(map[string]Result),
 	}
 }
 
@@ -62,6 +74,15 @@ func (l *Locator) Open() error {
 		return err
 	}
 	l.db = db
+	if _, err := os.Stat(l.asnDBPath); err == nil {
+		asnDB, openErr := geoip2.Open(l.asnDBPath)
+		if openErr != nil {
+			_ = db.Close()
+			l.db = nil
+			return openErr
+		}
+		l.asnDB = asnDB
+	}
 	slog.Info("geoip database opened", "path", l.dbPath)
 	return nil
 }
@@ -74,6 +95,46 @@ func (l *Locator) Close() {
 		_ = l.db.Close()
 		l.db = nil
 	}
+	if l.asnDB != nil {
+		_ = l.asnDB.Close()
+		l.asnDB = nil
+	}
+}
+
+func (l *Locator) EnsureASNDB(downloadURL string) error {
+	l.mu.RLock()
+	ready := l.asnDB != nil
+	l.mu.RUnlock()
+	if ready {
+		return nil
+	}
+	if downloadURL == "" {
+		downloadURL = DefaultASNDBURL
+	}
+	if err := os.MkdirAll(filepath.Dir(l.asnDBPath), 0o750); err != nil {
+		return err
+	}
+	tmp := l.asnDBPath + ".tmp"
+	if err := downloadFile(downloadURL, tmp); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("download ASN database: %w", err)
+	}
+	if err := os.Rename(tmp, l.asnDBPath); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	asnDB, err := geoip2.Open(l.asnDBPath)
+	if err != nil {
+		return err
+	}
+	l.mu.Lock()
+	if l.asnDB != nil {
+		_ = l.asnDB.Close()
+	}
+	l.asnDB = asnDB
+	l.cache = make(map[string]Result)
+	l.mu.Unlock()
+	return nil
 }
 
 // EnsureDB 若本地无库则下载
@@ -84,7 +145,7 @@ func (l *Locator) EnsureDB(downloadURL string) error {
 	if downloadURL == "" {
 		downloadURL = DefaultDBURL
 	}
-	if err := os.MkdirAll(filepath.Dir(l.dbPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(l.dbPath), 0o750); err != nil {
 		return err
 	}
 	tmp := l.dbPath + ".tmp"
@@ -106,7 +167,7 @@ func downloadFile(url, path string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "node-hunter-geo/1.0")
+	req.Header.Set("User-Agent", "nodeharvest-geo/1.0")
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -115,6 +176,7 @@ func downloadFile(url, path string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("http %d", resp.StatusCode)
 	}
+	// #nosec G304 -- path is a generated temporary file under the configured GeoIP directory.
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -173,6 +235,10 @@ func (l *Locator) LookupHost(host, nodeName string) Result {
 			out.CountryCode = NormalizeCode(out.CountryCode)
 			out.Source = "mmdb"
 		}
+		if asn, org, ok := l.lookupASN(ip); ok {
+			out.ASN = asn
+			out.ISP = org
+		}
 	}
 	// 名称启发：MMDB 失败或 CDN anycast 不准时作为补充
 	if nameR := FromName(nodeName); nameR.CountryCode != "" {
@@ -196,6 +262,20 @@ func (l *Locator) LookupHost(host, nodeName string) Result {
 		l.mu.Unlock()
 	}
 	return out
+}
+
+func (l *Locator) lookupASN(ip net.IP) (string, string, bool) {
+	l.mu.RLock()
+	db := l.asnDB
+	l.mu.RUnlock()
+	if db == nil {
+		return "", "", false
+	}
+	rec, err := db.ASN(ip)
+	if err != nil || rec == nil || rec.AutonomousSystemNumber == 0 {
+		return "", "", false
+	}
+	return fmt.Sprintf("AS%d", rec.AutonomousSystemNumber), rec.AutonomousSystemOrganization, true
 }
 
 func (l *Locator) lookupIP(ip net.IP) (Result, bool) {

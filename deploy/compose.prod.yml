@@ -1,0 +1,174 @@
+name: nodeharvest
+
+x-app-environment: &app-environment
+  TZ: Asia/Shanghai
+  NODE_HARVEST_DATABASE_URL: postgres://nodeharvest:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/nodeharvest?sslmode=disable
+  NODE_HARVEST_REDIS_URL: redis://redis:6379/0
+  NODE_HARVEST_TOKEN: ${NODE_HARVEST_TOKEN:?set NODE_HARVEST_TOKEN}
+  NODE_HARVEST_ADMIN_TOKEN: ${NODE_HARVEST_ADMIN_TOKEN:?set NODE_HARVEST_ADMIN_TOKEN}
+  NODE_HARVEST_SESSION_SECRET: ${NODE_HARVEST_SESSION_SECRET:?set NODE_HARVEST_SESSION_SECRET}
+  NODE_HARVEST_ALERT_WEBHOOK_SECRET: ${NODE_HARVEST_ALERT_WEBHOOK_SECRET:-}
+  NODE_HARVEST_OBJECT_STORE_ENDPOINT: http://minio:9000
+  NODE_HARVEST_OBJECT_STORE_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:?set OBJECT_STORE_ACCESS_KEY}
+  NODE_HARVEST_OBJECT_STORE_SECRET_KEY: ${OBJECT_STORE_SECRET_KEY:?set OBJECT_STORE_SECRET_KEY}
+  NODE_HARVEST_OBJECT_STORE_BUCKET: nodeharvest
+  NODE_HARVEST_OBJECT_STORE_AUTO_CREATE: "1"
+  NODE_HARVEST_PUBLIC_URL: https://${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN}
+  NODE_HARVEST_SINGBOX: /app/bin/sing-box
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+x-app-security: &app-security
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp:size=128m,mode=1777]
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nodeharvest
+      POSTGRES_USER: nodeharvest
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U nodeharvest -d nodeharvest]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: [redis-server, --appendonly, "yes", --maxmemory-policy, noeviction]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    command: [server, /data, --console-address, :9001]
+    environment:
+      MINIO_ROOT_USER: ${OBJECT_STORE_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${OBJECT_STORE_SECRET_KEY}
+    volumes:
+      - object-data:/data
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:9000/minio/health/live]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  nodeharvest:
+    image: ${NODE_HARVEST_IMAGE:?set NODE_HARVEST_IMAGE}
+    restart: unless-stopped
+    environment:
+      <<: *app-environment
+      NODE_HARVEST_EMBEDDED_WORKERS: "0"
+      NODE_HARVEST_SCHEDULE: "1"
+    volumes:
+      - app-data:/app/data
+      - app-output:/app/output
+    <<: *app-security
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:8080/api/ready]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    image: ${NODE_HARVEST_IMAGE:?set NODE_HARVEST_IMAGE}
+    restart: unless-stopped
+    entrypoint: [/app/bin/nodeharvest-worker]
+    command: [-config, /app/configs/config.yaml, -workers, "${WORKER_CONCURRENCY:-2}"]
+    environment:
+      <<: *app-environment
+    volumes:
+      - app-data:/app/data
+      - app-output:/app/output
+    <<: *app-security
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:?set ADMIN_DOMAIN}
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [nodeharvest]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.134.0
+    restart: unless-stopped
+    command: [--config=/etc/otelcol/config.yaml]
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    depends_on: [jaeger]
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.72.0
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - 127.0.0.1:16686:16686
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.retention.time=30d]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - 127.0.0.1:9090:9090
+    depends_on: [nodeharvest, node-exporter, blackbox-exporter]
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    restart: unless-stopped
+    command: [--path.rootfs=/host]
+    volumes:
+      - /:/host:ro,rslave
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.27.0
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  app-data:
+  app-output:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  object-data:

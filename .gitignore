@@ -1,8 +1,12 @@
 # Binaries
 /bin/*
 !/bin/.gitkeep
-/node-hunter
-/node-hunter-server
+/nodeharvest
+/nodeharvest-server
+/nodeharvest-worker
+/nodeharvest-migrate
+/dist/
+coverage.out
 *.exe
 *.dll
 *.so
@@ -16,6 +20,12 @@ data/*
 logs/*
 !logs/.gitkeep
 *.pid
+*.tmp
+
+# Local secrets
+.env
+.env.*
+!.env.example
 
 # GeoIP / SQLite (downloaded or generated)
 data/*.mmdb

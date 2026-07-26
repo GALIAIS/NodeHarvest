@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/local/node-hunter/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
 	"gopkg.in/yaml.v3"
 )
 

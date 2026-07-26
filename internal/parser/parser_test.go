@@ -16,6 +16,17 @@ func TestParseVLESS(t *testing.T) {
 	if n.UUID == "" || !n.TLS {
 		t.Fatalf("missing uuid/tls: %+v", n)
 	}
+	if n.SkipTLSVerify() {
+		t.Fatal("certificate verification disabled without an explicit source option")
+	}
+
+	insecure, err := ParseURI("vless://id@example.org:443?security=tls&allowInsecure=1", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !insecure.SkipTLSVerify() {
+		t.Fatal("explicit allowInsecure option was not preserved")
+	}
 }
 
 func TestParseTrojan(t *testing.T) {

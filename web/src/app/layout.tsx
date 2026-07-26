@@ -22,7 +22,7 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Node Hunter · 高质量节点观测台",
+  title: "NodeHarvest · 高质量节点观测台",
   description: "自动采集、智能测速、AI 站点可达筛选的代理节点控制台",
 };
 

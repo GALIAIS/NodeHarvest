@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nodeharvest.fullname" . }}-worker
+  labels:
+    {{- include "nodeharvest.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "nodeharvest.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ .Values.config.inline | sha256sum }}
+      labels:
+        {{- include "nodeharvest.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: {{ include "nodeharvest.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [/app/bin/nodeharvest-worker]
+          args: [-config, /app/configs/config.yaml, -workers, {{ .Values.worker.concurrency | quote }}]
+          env:
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.otelEndpoint | quote }}}
+            {{- if .Values.objectStore.endpoint }}
+            - {name: NODE_HARVEST_OBJECT_STORE_ENDPOINT, value: {{ .Values.objectStore.endpoint | quote }}}
+            - {name: NODE_HARVEST_OBJECT_STORE_BUCKET, value: {{ .Values.objectStore.bucket | quote }}}
+            - {name: NODE_HARVEST_OBJECT_STORE_AUTO_CREATE, value: {{ .Values.objectStore.autoCreateBucket | quote }}}
+            {{- end }}
+            {{- include "nodeharvest.secretEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /app/data}
+            - {name: output, mountPath: /app/output}
+            - {name: tmp, mountPath: /tmp}
+            {{- if or .Values.config.existingConfigMap .Values.config.inline }}
+            - {name: config, mountPath: /app/configs/config.yaml, subPath: config.yaml, readOnly: true}
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim: {claimName: {{ include "nodeharvest.fullname" . }}-data}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - {name: output, emptyDir: {}}
+        - {name: tmp, emptyDir: {medium: Memory, sizeLimit: 256Mi}}
+        {{- if or .Values.config.existingConfigMap .Values.config.inline }}
+        - name: config
+          configMap: {name: {{ include "nodeharvest.configMapName" . }}}
+        {{- end }}

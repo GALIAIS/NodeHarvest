@@ -3,6 +3,7 @@ package middleware
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -52,18 +53,28 @@ func (tb *TokenBucket) cleanup() {
 }
 
 func (tb *TokenBucket) Allow(key string) bool {
+	return tb.AllowRate(key, tb.rate, int(tb.burst))
+}
+
+func (tb *TokenBucket) AllowRate(key string, rps float64, burst int) bool {
+	if rps <= 0 {
+		rps = tb.rate
+	}
+	if burst <= 0 {
+		burst = int(tb.burst)
+	}
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 	v, ok := tb.visitors[key]
 	now := time.Now()
 	if !ok {
-		tb.visitors[key] = &visitor{tokens: tb.burst - 1, last: now}
+		tb.visitors[key] = &visitor{tokens: float64(burst - 1), last: now}
 		return true
 	}
 	elapsed := now.Sub(v.last).Seconds()
-	v.tokens += elapsed * tb.rate
-	if v.tokens > tb.burst {
-		v.tokens = tb.burst
+	v.tokens += elapsed * rps
+	if v.tokens > float64(burst) {
+		v.tokens = float64(burst)
 	}
 	v.last = now
 	if v.tokens < 1 {
@@ -73,27 +84,51 @@ func (tb *TokenBucket) Allow(key string) bool {
 	return true
 }
 
-func ClientIP(r *http.Request) string {
-	if xff := r.Header.Get("CF-Connecting-IP"); xff != "" {
-		return strings.TrimSpace(xff)
+func ClientIP(r *http.Request, trustedProxies []string) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
 	}
-	if xff := r.Header.Get("X-Real-IP"); xff != "" {
-		return strings.TrimSpace(xff)
+	remote, err := netip.ParseAddr(strings.TrimSpace(host))
+	if err != nil || !trustedProxy(remote, trustedProxies) {
+		return host
 	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[0])
+		for i := len(parts) - 1; i >= 0; i-- {
+			ip, err := netip.ParseAddr(strings.TrimSpace(parts[i]))
+			if err != nil {
+				continue
+			}
+			if !trustedProxy(ip, trustedProxies) || i == 0 {
+				return ip.String()
+			}
+		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+	for _, raw := range []string{r.Header.Get("CF-Connecting-IP"), r.Header.Get("X-Real-IP")} {
+		if ip, err := netip.ParseAddr(strings.TrimSpace(raw)); err == nil {
+			return ip.String()
+		}
 	}
-	return host
+	return remote.String()
 }
 
-func (tb *TokenBucket) Middleware(next http.Handler) http.Handler {
+func trustedProxy(ip netip.Addr, entries []string) bool {
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if prefix, err := netip.ParsePrefix(entry); err == nil && prefix.Contains(ip) {
+			return true
+		}
+		if addr, err := netip.ParseAddr(entry); err == nil && addr == ip {
+			return true
+		}
+	}
+	return false
+}
+
+func (tb *TokenBucket) Middleware(next http.Handler, trustedProxies []string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := ClientIP(r)
+		key := ClientIP(r, trustedProxies)
 		// 订阅路径叠加 token 维度
 		if strings.Contains(r.URL.Path, "/sub") {
 			if t := r.URL.Query().Get("token"); t != "" {

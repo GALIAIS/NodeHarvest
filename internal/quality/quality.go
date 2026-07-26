@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/local/node-hunter/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
 )
 
 // Options 智能测速选项
@@ -77,7 +77,7 @@ func (t *Tester) TestAll(ctx context.Context, nodes []*model.Node) {
 
 func (t *Tester) testOne(ctx context.Context, n *model.Node) {
 	n.TestedAt = time.Now()
-	q := &model.Quality{Rounds: t.opts.Rounds, Notes: []string{}}
+	q := &model.Quality{ScoreVersion: "v2", Rounds: t.opts.Rounds, Notes: []string{}}
 	latencies := make([]time.Duration, 0, t.opts.Rounds)
 	success := 0
 
@@ -176,9 +176,8 @@ func (t *Tester) probeTLS(ctx context.Context, n *model.Node) (bool, int64) {
 		serverName = n.Server
 	}
 	tlsConn := tls.Client(conn, &tls.Config{
-		InsecureSkipVerify: true,
-		ServerName:         serverName,
-		MinVersion:         tls.VersionTLS12,
+		ServerName: serverName,
+		MinVersion: tls.VersionTLS12,
 	})
 	_ = tlsConn.SetDeadline(time.Now().Add(t.opts.Timeout))
 	if err := tlsConn.HandshakeContext(cctx); err != nil {

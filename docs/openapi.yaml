@@ -1,0 +1,947 @@
+openapi: 3.1.0
+info:
+  title: NodeHarvest API
+  version: 3.0.0
+  description: |
+    Control-plane, inventory, workflow, governance, and subscription API.
+    Management endpoints accept an HttpOnly session cookie, Bearer session, or
+    the legacy X-Admin-Token. Subscription endpoints use Bearer or X-Sub-Token.
+    The subscription surface is also mounted at `/api/sub` and may be mounted at
+    one additional operator-configured path prefix.
+servers:
+  - url: /
+security:
+  - sessionCookie: []
+  - bearerSession: []
+  - adminToken: []
+tags:
+  - name: Status
+  - name: Auth
+  - name: Inventory
+  - name: Jobs
+  - name: Sources
+  - name: Distribution
+  - name: Administration
+  - name: Subscription
+paths:
+  /api/health:
+    get:
+      tags: [Status]
+      summary: Liveness and dependency status
+      security: []
+      responses:
+        "200":
+          description: Process is live
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+  /api/ready:
+    get:
+      tags: [Status]
+      summary: Serving readiness
+      security: []
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+        "503": {$ref: "#/components/responses/Error"}
+  /api/version:
+    get:
+      tags: [Status]
+      summary: Build and runtime version
+      security: []
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/terms:
+    get:
+      tags: [Status]
+      summary: Acceptable-use policy
+      security: []
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Create a local account session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant, username, password]
+              properties:
+                tenant: {type: string, default: default}
+                username: {type: string}
+                password: {type: string, format: password}
+      responses:
+        "200":
+          description: Authenticated; also sets the session cookie
+          headers:
+            Set-Cookie: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Session"}
+        "401": {$ref: "#/components/responses/Error"}
+        "429": {$ref: "#/components/responses/Error"}
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Clear the session cookie
+      security: []
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Inspect the current identity and enabled login methods
+      security: []
+      responses:
+        "200":
+          description: Session state
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Session"}
+  /api/v1/auth/oidc/start:
+    get:
+      tags: [Auth]
+      summary: Start OIDC authorization-code login
+      security: []
+      responses:
+        "302": {description: Redirect to identity provider}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/v1/auth/oidc/callback:
+    get:
+      tags: [Auth]
+      summary: Complete OIDC authorization-code login
+      security: []
+      parameters:
+        - {name: state, in: query, required: true, schema: {type: string}}
+        - {name: code, in: query, required: true, schema: {type: string}}
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+        "302": {description: Redirect to console}
+        "400": {$ref: "#/components/responses/Error"}
+  /api/stats:
+    get:
+      tags: [Inventory]
+      summary: Current node and quality aggregates
+      security: []
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/stats/trends:
+    get:
+      tags: [Inventory]
+      summary: Daily node-quality aggregates
+      parameters:
+        - {$ref: "#/components/parameters/Days"}
+      responses:
+        "200":
+          description: Daily metrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/DailyMetric"}
+  /api/nodes:
+    get:
+      tags: [Inventory]
+      summary: Search and cursor-page nodes
+      security: []
+      parameters:
+        - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Cursor"}
+        - {name: q, in: query, schema: {type: string}}
+        - {name: protocol, in: query, schema: {type: string}}
+        - {name: source, in: query, schema: {type: string}}
+        - {name: grade, in: query, schema: {type: string}}
+        - {name: country, in: query, schema: {type: string, minLength: 2, maxLength: 2}}
+        - {name: min_score, in: query, schema: {type: number, minimum: 0, maximum: 100}}
+        - {name: alive, in: query, schema: {type: boolean}}
+        - {name: hq, in: query, schema: {type: boolean}}
+        - {name: verified, in: query, schema: {type: boolean}}
+        - {name: ai, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: Node page; credentials are redacted unless an admin is authenticated
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/NodePage"}
+        "400": {$ref: "#/components/responses/Error"}
+  /api/nodes/{id}:
+    get:
+      tags: [Inventory]
+      summary: Get a node
+      security: []
+      parameters:
+        - {$ref: "#/components/parameters/ID"}
+      responses:
+        "200":
+          description: Node
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Node"}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/nodes/{id}/metrics:
+    get:
+      tags: [Inventory]
+      summary: Daily metrics for one node
+      parameters:
+        - {$ref: "#/components/parameters/ID"}
+        - {$ref: "#/components/parameters/Days"}
+      responses:
+        "200":
+          description: Daily metrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/DailyMetric"}
+  /api/jobs:
+    get:
+      tags: [Jobs]
+      summary: Cursor-page tenant jobs
+      parameters:
+        - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Cursor"}
+      responses:
+        "200":
+          description: Job page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs, count, has_more]
+                properties:
+                  jobs: {type: array, items: {$ref: "#/components/schemas/Job"}}
+                  count: {type: integer}
+                  next_cursor: {type: string}
+                  has_more: {type: boolean}
+        "401": {$ref: "#/components/responses/Error"}
+  /api/jobs/{id}:
+    get:
+      tags: [Jobs]
+      summary: Get a tenant job
+      parameters:
+        - {$ref: "#/components/parameters/ID"}
+      responses:
+        "200":
+          description: Job
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Job"}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/jobs/{id}/events:
+    get:
+      tags: [Jobs]
+      summary: Poll append-only job events
+      parameters:
+        - {$ref: "#/components/parameters/ID"}
+        - {name: after, in: query, schema: {type: integer, format: int64, minimum: 0}}
+      responses:
+        "200":
+          description: Ordered events
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/JobEvent"}
+  /api/jobs/fetch:
+    $ref: "#/components/pathItems/StartJob"
+  /api/jobs/quality:
+    $ref: "#/components/pathItems/StartJob"
+  /api/jobs/ai:
+    $ref: "#/components/pathItems/StartJob"
+  /api/jobs/full:
+    $ref: "#/components/pathItems/StartJob"
+  /api/jobs/geo:
+    $ref: "#/components/pathItems/StartJob"
+  /api/jobs/dial:
+    $ref: "#/components/pathItems/StartJob"
+  /api/jobs/purity:
+    $ref: "#/components/pathItems/StartJob"
+  /api/jobs/cancel:
+    post:
+      tags: [Jobs]
+      summary: Cancel the active in-process job
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/dial/status:
+    get:
+      tags: [Jobs]
+      summary: Real-protocol dialer capability and settings
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/purity/summary:
+    get:
+      tags: [Inventory]
+      summary: Exit-IP purity summary
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/countries:
+    get:
+      tags: [Inventory]
+      summary: Country aggregates
+      security: []
+      parameters:
+        - {name: alive, in: query, schema: {type: boolean}}
+        - {name: hq, in: query, schema: {type: boolean}}
+        - {name: protocol, in: query, schema: {type: string}}
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/sources:
+    get:
+      tags: [Sources]
+      summary: Configured sources with health and contribution
+      security: []
+      parameters:
+        - name: sort
+          in: query
+          schema: {type: string, enum: [priority, health, contribution, success], default: priority}
+      responses:
+        "200":
+          description: Sources; sensitive URL components are redacted for public callers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Source"}
+        "400": {$ref: "#/components/responses/Error"}
+  /api/ai/targets:
+    get:
+      tags: [Inventory]
+      summary: Configured AI reachability targets
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/ai/host:
+    get:
+      tags: [Inventory]
+      summary: Host reachability results
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/export/raw:
+    $ref: "#/components/pathItems/AdminExport"
+  /api/export/base64:
+    $ref: "#/components/pathItems/AdminExport"
+  /api/export/clash:
+    $ref: "#/components/pathItems/AdminExport"
+  /api/config:
+    get:
+      tags: [Status]
+      summary: Redacted effective configuration
+      security: []
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/schedule:
+    get:
+      tags: [Status]
+      summary: Scheduler status and next run
+      security: []
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/pools:
+    get:
+      tags: [Distribution]
+      summary: Smart pool definitions, counts, and URLs
+      security: []
+      responses:
+        "200":
+          description: Pools
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Pool"}
+  /api/pools/{key}/export/raw:
+    get:
+      tags: [Distribution]
+      summary: Export one smart pool as raw URIs
+      parameters:
+        - {$ref: "#/components/parameters/PoolKey"}
+      responses:
+        "200": {description: Raw URI list, content: {text/plain: {schema: {type: string}}}}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/admin/tokens:
+    get:
+      tags: [Administration]
+      summary: List tenant subscription credentials and today's usage
+      responses:
+        "200":
+          description: Tokens without hashes or plaintext
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/Token"}}
+    post:
+      tags: [Administration]
+      summary: Create a tenant subscription credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CreateToken"}
+      responses:
+        "200":
+          description: Created token; plaintext is returned only in this response
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Token"}
+        "400": {$ref: "#/components/responses/Error"}
+  /api/admin/tokens/{id}:
+    delete:
+      tags: [Administration]
+      summary: Permanently revoke a token
+      parameters:
+        - {$ref: "#/components/parameters/ID"}
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/admin/tokens/{id}/enable:
+    $ref: "#/components/pathItems/TokenState"
+  /api/admin/tokens/{id}/disable:
+    $ref: "#/components/pathItems/TokenState"
+  /api/admin/audit:
+    get:
+      tags: [Administration]
+      summary: Query tenant audit entries
+      parameters:
+        - {$ref: "#/components/parameters/Limit"}
+        - {name: from, in: query, schema: {oneOf: [{type: string, format: date}, {type: string, format: date-time}]}}
+        - {name: to, in: query, schema: {oneOf: [{type: string, format: date}, {type: string, format: date-time}]}}
+      responses:
+        "200":
+          description: Audit entries
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/Audit"}}
+        "400": {$ref: "#/components/responses/Error"}
+  /api/admin/publish/refresh:
+    post:
+      tags: [Administration]
+      summary: Re-render and publish subscription artifacts
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/admin/sources/{name}/enable:
+    $ref: "#/components/pathItems/SourceState"
+  /api/admin/sources/{name}/disable:
+    $ref: "#/components/pathItems/SourceState"
+  /api/admin/sources/{name}/probe:
+    post:
+      tags: [Sources]
+      summary: Fetch and evaluate one source
+      parameters:
+        - {$ref: "#/components/parameters/SourceName"}
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+        "502": {$ref: "#/components/responses/JSON"}
+  /api/admin/tasks:
+    get:
+      tags: [Jobs]
+      summary: List tenant durable queue tasks
+      parameters:
+        - {$ref: "#/components/parameters/Limit"}
+        - {name: status, in: query, schema: {type: string, enum: [queued, running, completed, failed, dead, canceled]}}
+      responses:
+        "200":
+          description: Queue tasks with internal options redacted
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/Task"}}
+  /api/admin/tasks/{id}/cancel:
+    post:
+      tags: [Jobs]
+      summary: Cancel a queued or running tenant task
+      parameters:
+        - {$ref: "#/components/parameters/ID"}
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/admin/queue:
+    get:
+      tags: [Jobs]
+      summary: Durable queue state counters
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/admin/users:
+    get:
+      tags: [Administration]
+      summary: List users in the current tenant
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/User"}}
+    post:
+      tags: [Administration]
+      summary: Create a local user in the current tenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: {type: string}
+                email: {type: string, format: email}
+                password: {type: string, format: password, minLength: 12}
+                role: {type: string, enum: [viewer, operator, admin]}
+      responses:
+        "200":
+          description: User
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/User"}
+        "409": {$ref: "#/components/responses/Error"}
+  /api/admin/users/{id}/enable:
+    $ref: "#/components/pathItems/UserState"
+  /api/admin/users/{id}/disable:
+    $ref: "#/components/pathItems/UserState"
+  /api/admin/config:
+    patch:
+      tags: [Administration]
+      summary: Confirm and apply runtime-safe configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RuntimePatch"}
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+        "400": {$ref: "#/components/responses/Error"}
+  /api/admin/config/versions:
+    get:
+      tags: [Administration]
+      summary: List confirmed runtime configuration versions
+      parameters:
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+  /api/admin/alerts:
+    get:
+      tags: [Administration]
+      summary: List system anomaly alerts
+      parameters:
+        - {name: active, in: query, schema: {type: boolean, default: true}}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: Alerts
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/Alert"}}
+  /api/admin/alerts/{id}/acknowledge:
+    $ref: "#/components/pathItems/AlertState"
+  /api/admin/alerts/{id}/resolve:
+    $ref: "#/components/pathItems/AlertState"
+  /sub:
+    get:
+      tags: [Subscription]
+      summary: Subscription endpoint index
+      security:
+        - bearerSubscription: []
+        - subscriptionToken: []
+        - queryToken: []
+      responses:
+        "200": {$ref: "#/components/responses/JSON"}
+        "401": {$ref: "#/components/responses/Error"}
+  /metrics:
+    get:
+      tags: [Status]
+      summary: Prometheus metrics
+      responses:
+        "200":
+          description: Prometheus text exposition
+          content:
+            text/plain:
+              schema: {type: string}
+  /sub/{format}:
+    get:
+      tags: [Subscription]
+      summary: Get the global subscription artifact
+      security:
+        - bearerSubscription: []
+        - subscriptionToken: []
+        - queryToken: []
+      parameters:
+        - {$ref: "#/components/parameters/GlobalFormat"}
+      responses:
+        "200": {description: Subscription artifact}
+        "304": {description: ETag unchanged}
+        "401": {$ref: "#/components/responses/Error"}
+        "429": {$ref: "#/components/responses/Error"}
+  /sub/pool/{key}/{format}:
+    get:
+      tags: [Subscription]
+      summary: Get a smart-pool subscription artifact
+      security:
+        - bearerSubscription: []
+        - subscriptionToken: []
+        - queryToken: []
+      parameters:
+        - {$ref: "#/components/parameters/PoolKey"}
+        - {$ref: "#/components/parameters/SubscriptionFormat"}
+      responses:
+        "200": {description: Subscription artifact}
+        "404": {$ref: "#/components/responses/Error"}
+  /sub/country/{code}/{format}:
+    get:
+      tags: [Subscription]
+      summary: Get a country-partitioned subscription artifact
+      security:
+        - bearerSubscription: []
+        - subscriptionToken: []
+        - queryToken: []
+      parameters:
+        - {name: code, in: path, required: true, schema: {type: string, minLength: 2, maxLength: 2}}
+        - {$ref: "#/components/parameters/SubscriptionFormat"}
+      responses:
+        "200": {description: Subscription artifact}
+        "403": {$ref: "#/components/responses/Error"}
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: nh_session
+    bearerSession:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    adminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+    bearerSubscription:
+      type: http
+      scheme: bearer
+    subscriptionToken:
+      type: apiKey
+      in: header
+      name: X-Sub-Token
+    queryToken:
+      type: apiKey
+      in: query
+      name: token
+      description: Disabled by default; enable only for clients that cannot send headers.
+  parameters:
+    ID: {name: id, in: path, required: true, schema: {type: string}}
+    PoolKey: {name: key, in: path, required: true, schema: {type: string}}
+    SourceName: {name: name, in: path, required: true, schema: {type: string}}
+    GlobalFormat: {name: format, in: path, required: true, schema: {type: string, enum: [raw, base64, clash, clash.yaml, meta]}}
+    SubscriptionFormat: {name: format, in: path, required: true, schema: {type: string, enum: [raw, base64, clash, clash.yaml]}}
+    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500}}
+    Cursor: {name: cursor, in: query, schema: {type: string}}
+    Days: {name: days, in: query, schema: {type: integer, minimum: 1, maximum: 365, default: 30}}
+  responses:
+    JSON:
+      description: JSON response
+      content:
+        application/json:
+          schema: {type: object, additionalProperties: true}
+    Error:
+      description: Plain-text error
+      content:
+        text/plain:
+          schema: {type: string}
+  pathItems:
+    StartJob:
+      post:
+        tags: [Jobs]
+        summary: Enqueue a job
+        requestBody:
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        responses:
+          "200":
+            description: Created job
+            content:
+              application/json:
+                schema: {$ref: "#/components/schemas/Job"}
+          "401": {$ref: "#/components/responses/Error"}
+          "403": {$ref: "#/components/responses/Error"}
+          "409": {$ref: "#/components/responses/Error"}
+    AdminExport:
+      get:
+        tags: [Distribution]
+        summary: Build an authenticated ad-hoc export
+        parameters:
+          - {$ref: "#/components/parameters/Limit"}
+          - {name: min_score, in: query, schema: {type: number, minimum: 0, maximum: 100}}
+          - {name: alive, in: query, schema: {type: boolean}}
+          - {name: hq, in: query, schema: {type: boolean}}
+          - {name: country, in: query, schema: {type: string}}
+          - {name: protocol, in: query, schema: {type: string}}
+          - {name: ai, in: query, schema: {type: string}}
+        responses:
+          "200": {description: Export artifact}
+          "401": {$ref: "#/components/responses/Error"}
+    TokenState:
+      post:
+        tags: [Administration]
+        summary: Change token enabled state
+        parameters:
+          - {$ref: "#/components/parameters/ID"}
+        responses:
+          "200": {$ref: "#/components/responses/JSON"}
+          "404": {$ref: "#/components/responses/Error"}
+    SourceState:
+      post:
+        tags: [Sources]
+        summary: Change source manual state
+        parameters:
+          - {$ref: "#/components/parameters/SourceName"}
+        responses:
+          "200": {$ref: "#/components/responses/JSON"}
+          "400": {$ref: "#/components/responses/Error"}
+    UserState:
+      post:
+        tags: [Administration]
+        summary: Change user enabled state
+        parameters:
+          - {$ref: "#/components/parameters/ID"}
+        responses:
+          "200": {$ref: "#/components/responses/JSON"}
+          "400": {$ref: "#/components/responses/Error"}
+          "404": {$ref: "#/components/responses/Error"}
+    AlertState:
+      post:
+        tags: [Administration]
+        summary: Change anomaly lifecycle state
+        parameters:
+          - {$ref: "#/components/parameters/ID"}
+        responses:
+          "200": {$ref: "#/components/responses/JSON"}
+          "404": {$ref: "#/components/responses/Error"}
+  schemas:
+    Health:
+      type: object
+      required: [ok, time, version, uptime_sec, nodes, database, redis]
+      properties:
+        ok: {type: boolean}
+        time: {type: string, format: date-time}
+        version: {type: string}
+        uptime_sec: {type: integer}
+        nodes: {type: integer}
+        running_job: {type: boolean}
+        geo_mmdb: {type: boolean}
+        database: {type: object, additionalProperties: true}
+        redis: {type: object, additionalProperties: true}
+        publish_count: {type: integer}
+        publish_updated_at: {type: string, format: date-time}
+        publish_fresh: {type: boolean}
+        schedule: {type: boolean}
+        sources_unhealthy: {type: integer}
+    Principal:
+      type: object
+      required: [kind, name, role, tenant_id, authenticated]
+      properties:
+        kind: {type: string}
+        token_id: {type: string}
+        name: {type: string}
+        role: {type: string, enum: [viewer, operator, admin]}
+        tenant_id: {type: string}
+        subject: {type: string}
+        email: {type: string, format: email}
+        authenticated: {type: boolean}
+    Session:
+      type: object
+      required: [authenticated, principal]
+      properties:
+        authenticated: {type: boolean}
+        principal: {$ref: "#/components/schemas/Principal"}
+        oidc_enabled: {type: boolean}
+        local_enabled: {type: boolean}
+    Node:
+      type: object
+      required: [id, protocol, server, port, alive, score]
+      additionalProperties: true
+      properties:
+        id: {type: string}
+        protocol: {type: string}
+        name: {type: string}
+        server: {type: string}
+        port: {type: integer}
+        raw_uri: {type: string, description: Admin only}
+        source: {type: string}
+        sources: {type: array, items: {type: string}}
+        alive: {type: boolean}
+        score: {type: number}
+        grade: {type: string}
+        country: {type: string}
+        asn: {type: string}
+        entry_type: {type: string}
+    NodePage:
+      type: object
+      required: [total, count, nodes, next_cursor, has_more]
+      properties:
+        total: {type: integer}
+        count: {type: integer}
+        nodes: {type: array, items: {$ref: "#/components/schemas/Node"}}
+        next_cursor: {type: string}
+        has_more: {type: boolean}
+    DailyMetric:
+      type: object
+      required: [day, samples, success_rate, p50_latency_ms, p95_latency_ms, avg_score, avg_throughput_bps]
+      properties:
+        day: {type: string, format: date}
+        samples: {type: integer}
+        success_rate: {type: number}
+        p50_latency_ms: {type: integer}
+        p95_latency_ms: {type: integer}
+        avg_score: {type: number}
+        avg_throughput_bps: {type: integer}
+    Job:
+      type: object
+      required: [id, type, status, progress, created_at, updated_at]
+      additionalProperties: true
+      properties:
+        id: {type: string}
+        type: {type: string}
+        status: {type: string}
+        progress: {type: number}
+        message: {type: string}
+        error: {type: string}
+        stats: {type: object, additionalProperties: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        started_at: {type: string, format: date-time}
+        ended_at: {type: string, format: date-time}
+    JobEvent:
+      type: object
+      required: [id, job_id, at, level, message]
+      properties:
+        id: {type: integer, format: int64}
+        job_id: {type: string}
+        at: {type: string, format: date-time}
+        level: {type: string}
+        message: {type: string}
+    Task:
+      type: object
+      required: [id, type, priority, status, attempts, max_attempts, available_at]
+      properties:
+        id: {type: string}
+        type: {type: string}
+        priority: {type: integer}
+        status: {type: string}
+        attempts: {type: integer}
+        max_attempts: {type: integer}
+        available_at: {type: string, format: date-time}
+        lease_until: {type: string, format: date-time}
+        worker_id: {type: string}
+        last_error: {type: string}
+    Source:
+      type: object
+      required: [name, url, priority, effective_enabled, health_score]
+      additionalProperties: true
+      properties:
+        name: {type: string}
+        type: {type: string}
+        url: {type: string}
+        priority: {type: integer}
+        effective_enabled: {type: boolean}
+        manually_disabled: {type: boolean}
+        disabled_until: {type: string, format: date-time}
+        success_rate: {type: number}
+        consecutive_failures: {type: integer}
+        contribution_total: {type: integer}
+        contribution_hq: {type: integer}
+        health_score: {type: number}
+    Pool:
+      type: object
+      required: [key, title, count, urls]
+      properties:
+        key: {type: string}
+        title: {type: string}
+        description: {type: string}
+        count: {type: integer}
+        refresh_sec: {type: integer}
+        min_score: {type: number}
+        max_nodes: {type: integer}
+        urls: {type: object, additionalProperties: {type: string}}
+    Token:
+      type: object
+      required: [id, name, token_prefix, enabled, tenant_id, daily_quota, requests_today, bytes_today]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        token_prefix: {type: string}
+        token: {type: string, description: Returned only on create}
+        enabled: {type: boolean}
+        max_rps: {type: number}
+        daily_quota: {type: integer, format: int64}
+        requests_today: {type: integer, format: int64}
+        bytes_today: {type: integer, format: int64}
+        allow_countries: {type: array, items: {type: string}}
+        allow_protocols: {type: array, items: {type: string}}
+        tenant_id: {type: string}
+        expires_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        last_used_at: {type: string, format: date-time}
+        note: {type: string}
+    CreateToken:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, maxLength: 100}
+        note: {type: string, maxLength: 1000}
+        countries: {type: array, items: {type: string, minLength: 2, maxLength: 2}}
+        protocols: {type: array, items: {type: string}}
+        days: {type: integer, minimum: 0, maximum: 3650}
+        max_rps: {type: number, minimum: 0, maximum: 1000}
+        daily_quota: {type: integer, minimum: 0}
+    User:
+      type: object
+      required: [id, tenant_id, username, role, enabled, created_at]
+      properties:
+        id: {type: string}
+        tenant_id: {type: string}
+        username: {type: string}
+        email: {type: string, format: email}
+        role: {type: string, enum: [viewer, operator, admin]}
+        enabled: {type: boolean}
+        oidc_issuer: {type: string}
+        oidc_subject: {type: string}
+        created_at: {type: string, format: date-time}
+        last_login_at: {type: string, format: date-time}
+    Audit:
+      type: object
+      required: [id, at, actor, action, detail]
+      properties:
+        id: {type: integer, format: int64}
+        at: {type: string, format: date-time}
+        actor: {type: string}
+        action: {type: string}
+        detail: {type: string}
+    RuntimePatch:
+      type: object
+      required: [confirm]
+      properties:
+        confirm: {type: boolean, const: true}
+        publish_min_score: {type: number, minimum: 0, maximum: 100}
+        publish_max_nodes: {type: integer, minimum: 1, maximum: 100000}
+        publish_alive_only: {type: boolean}
+        publish_cache_sec: {type: integer, minimum: 0, maximum: 86400}
+        publish_max_node_age_hours: {type: integer, minimum: 1, maximum: 8760}
+        governance_disable_after_failures: {type: integer, minimum: 1, maximum: 100}
+        governance_cooldown_hours: {type: integer, minimum: 1, maximum: 720}
+        governance_hq_drop_percent: {type: number, exclusiveMinimum: 0, maximum: 100}
+        governance_country_share_percent: {type: number, exclusiveMinimum: 0, maximum: 100}
+        dial_after_quality: {type: boolean}
+        dial_after_quality_max: {type: integer, minimum: 0, maximum: 100000}
+    Alert:
+      type: object
+      required: [id, kind, severity, message, active, created_at]
+      properties:
+        id: {type: string}
+        kind: {type: string}
+        severity: {type: string, enum: [warning, critical]}
+        message: {type: string}
+        details: {type: object, additionalProperties: true}
+        active: {type: boolean}
+        created_at: {type: string, format: date-time}
+        resolved_at: {type: string, format: date-time}
+        acknowledged_at: {type: string, format: date-time}
+        acknowledged_by: {type: string}

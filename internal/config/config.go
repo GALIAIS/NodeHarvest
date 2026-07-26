@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,29 +13,42 @@ import (
 )
 
 type Config struct {
-	App       AppConfig       `yaml:"app"`
-	Sources   []Source        `yaml:"sources"`
-	Protocols []string        `yaml:"protocols"`
-	Filter    FilterConfig    `yaml:"filter"`
-	Export    ExportConfig    `yaml:"export"`
-	Schedule  ScheduleConfig  `yaml:"schedule"`
-	Publish   PublishConfig   `yaml:"publish"`
-	Geo       GeoConfig       `yaml:"geo"`
-	Dial      DialConfig      `yaml:"dial"`
-	Security  SecurityConfig  `yaml:"security"`
-	Server    ServerConfig    `yaml:"server"`
-	SQLite    SQLiteConfig    `yaml:"sqlite"`
-	Logging   LoggingConfig   `yaml:"logging"`
+	App           AppConfig           `yaml:"app"`
+	Sources       []Source            `yaml:"sources"`
+	Protocols     []string            `yaml:"protocols"`
+	Filter        FilterConfig        `yaml:"filter"`
+	Export        ExportConfig        `yaml:"export"`
+	Schedule      ScheduleConfig      `yaml:"schedule"`
+	Publish       PublishConfig       `yaml:"publish"`
+	Geo           GeoConfig           `yaml:"geo"`
+	Dial          DialConfig          `yaml:"dial"`
+	Security      SecurityConfig      `yaml:"security"`
+	Server        ServerConfig        `yaml:"server"`
+	SQLite        SQLiteConfig        `yaml:"sqlite"`
+	Database      DatabaseConfig      `yaml:"database"`
+	Redis         RedisConfig         `yaml:"redis"`
+	ObjectStore   ObjectStoreConfig   `yaml:"object_store"`
+	Queue         QueueConfig         `yaml:"queue"`
+	Auth          AuthConfig          `yaml:"auth"`
+	Governance    GovernanceConfig    `yaml:"governance"`
+	QualityV2     QualityV2Config     `yaml:"quality_v2"`
+	Observability ObservabilityConfig `yaml:"observability"`
+	Pools         []PoolConfig        `yaml:"pools"`
+	Logging       LoggingConfig       `yaml:"logging"`
 }
 
 // DialConfig 真实协议拨测（sing-box / xray）
 type DialConfig struct {
 	Enabled     bool   `yaml:"enabled"`
-	Bin         string `yaml:"bin"`          // 空=自动查找
-	Engine      string `yaml:"engine"`       // auto|sing-box|xray
-	Concurrency int    `yaml:"concurrency"`  // 同时核心实例数
+	Bin         string `yaml:"bin"`         // 空=自动查找
+	Engine      string `yaml:"engine"`      // auto|sing-box|xray
+	Concurrency int    `yaml:"concurrency"` // 同时核心实例数
 	TimeoutSec  int    `yaml:"timeout_sec"`
 	TestURL     string `yaml:"test_url"`
+	// DownloadBytes is the maximum response payload read for throughput measurement.
+	DownloadBytes int64 `yaml:"download_bytes"`
+	// SamplePercent is used by automatic post-quality dial runs when no fixed maximum is set.
+	SamplePercent float64 `yaml:"sample_percent"`
 	// MaxNodes 单次最多拨测；0=不限制，对全部 HQ 分批真拨
 	MaxNodes int `yaml:"max_nodes"`
 	// BatchSize 多轮真拨每批数量（默认 200）
@@ -52,14 +67,22 @@ type SecurityConfig struct {
 	SubBurst        int     `yaml:"sub_burst"`
 	APIRPS          float64 `yaml:"api_rps"`
 	APIBurst        int     `yaml:"api_burst"`
+	LoginRPS        float64 `yaml:"login_rps"`
+	LoginBurst      int     `yaml:"login_burst"`
 }
 
 // ServerConfig 运行时
 type ServerConfig struct {
-	ReadHeaderTimeoutSec int  `yaml:"read_header_timeout_sec"`
-	ShutdownTimeoutSec   int  `yaml:"shutdown_timeout_sec"`
-	EnableMetrics        bool `yaml:"enable_metrics"`
-	EnablePprof          bool `yaml:"enable_pprof"`
+	ReadHeaderTimeoutSec int      `yaml:"read_header_timeout_sec"`
+	ReadTimeoutSec       int      `yaml:"read_timeout_sec"`
+	WriteTimeoutSec      int      `yaml:"write_timeout_sec"`
+	IdleTimeoutSec       int      `yaml:"idle_timeout_sec"`
+	ShutdownTimeoutSec   int      `yaml:"shutdown_timeout_sec"`
+	MaxHeaderBytes       int      `yaml:"max_header_bytes"`
+	TrustedProxies       []string `yaml:"trusted_proxies"`
+	AllowedOrigins       []string `yaml:"allowed_origins"`
+	EnableMetrics        bool     `yaml:"enable_metrics"`
+	EnablePprof          bool     `yaml:"enable_pprof"`
 }
 
 // SQLiteConfig 企业持久化
@@ -70,10 +93,12 @@ type SQLiteConfig struct {
 
 // GeoConfig IP 国家标注
 type GeoConfig struct {
-	Enabled     bool   `yaml:"enabled"`
-	DBPath      string `yaml:"db_path"`       // 默认 data/GeoLite2-Country.mmdb
-	DownloadURL string `yaml:"download_url"`  // 空则用内置镜像
-	AutoDownload bool  `yaml:"auto_download"` // 缺库时自动下载
+	Enabled        bool   `yaml:"enabled"`
+	DBPath         string `yaml:"db_path"` // 默认 data/GeoLite2-Country.mmdb
+	ASNDBPath      string `yaml:"asn_db_path"`
+	DownloadURL    string `yaml:"download_url"` // 空则用内置镜像
+	ASNDownloadURL string `yaml:"asn_download_url"`
+	AutoDownload   bool   `yaml:"auto_download"` // 缺库时自动下载
 	// AnnotateAfterQuality 测速后自动标注
 	AnnotateAfterQuality bool `yaml:"annotate_after_quality"`
 	// RenameWithFlag 导出时名称加国旗前缀
@@ -88,55 +113,61 @@ type AppConfig struct {
 }
 
 type Source struct {
-	Name    string `yaml:"name"`
-	Type    string `yaml:"type"` // subscription | raw | clash
-	URL     string `yaml:"url"`
-	Enabled bool   `yaml:"enabled"`
+	Name         string `yaml:"name"`
+	Type         string `yaml:"type"` // subscription | raw | clash
+	URL          string `yaml:"url"`
+	Enabled      bool   `yaml:"enabled"`
+	Priority     int    `yaml:"priority"`  // 越大越先采集；默认 50
+	MaxBytes     int64  `yaml:"max_bytes"` // 单源响应上限；默认 32 MiB
+	Jurisdiction string `yaml:"jurisdiction"`
 }
 
 type FilterConfig struct {
-	MaxLatencyMS      int     `yaml:"max_latency_ms"`
-	MinSuccess        bool    `yaml:"min_success"`
-	DropInvalid       bool    `yaml:"drop_invalid"`
-	PreferTLS         bool    `yaml:"prefer_tls"`
-	MaxNodes          int     `yaml:"max_nodes"`
-	SortBy            string  `yaml:"sort_by"`
-	MinScore          float64 `yaml:"min_score"`           // 高质量阈值，默认 70
-	PruneAfterQuality bool    `yaml:"prune_after_quality"` // 测速后剔除死亡节点
-	MaxStoreNodes     int     `yaml:"max_store_nodes"`     // 快照最多保留节点数
+	MaxLatencyMS        int     `yaml:"max_latency_ms"`
+	MinSuccess          bool    `yaml:"min_success"`
+	DropInvalid         bool    `yaml:"drop_invalid"`
+	PreferTLS           bool    `yaml:"prefer_tls"`
+	MaxNodes            int     `yaml:"max_nodes"`
+	SortBy              string  `yaml:"sort_by"`
+	MinScore            float64 `yaml:"min_score"`           // 高质量阈值，默认 70
+	PruneAfterQuality   bool    `yaml:"prune_after_quality"` // 测速后剔除死亡节点
+	MaxStoreNodes       int     `yaml:"max_store_nodes"`     // 快照最多保留节点数
+	CollapseSameIPPorts bool    `yaml:"collapse_same_ip_ports"`
 }
 
 type ExportConfig struct {
 	Dir            string   `yaml:"dir"`
 	Formats        []string `yaml:"formats"`
 	FilenamePrefix string   `yaml:"filename_prefix"`
+	KeepRuns       int      `yaml:"keep_runs"`
 }
 
 // ScheduleConfig 定时任务：采集 / 测速 / 全流程
 type ScheduleConfig struct {
-	Enabled        bool   `yaml:"enabled"`
-	IntervalMin    int    `yaml:"interval_min"`     // 间隔分钟，默认 180
-	Job            string `yaml:"job"`              // full | fetch | quality
-	RunOnStart     bool   `yaml:"run_on_start"`     // 启动后是否立即跑一轮
-	SkipAI         bool   `yaml:"skip_ai"`          // full 时跳过 AI 探测（更快）
-	MaxTest        int    `yaml:"max_test"`         // 测速上限
-	Rounds         int    `yaml:"rounds"`           // 测速轮数
-	JitterSec      int    `yaml:"jitter_sec"`       // 启动抖动，避免整点齐打
+	Enabled     bool   `yaml:"enabled"`
+	IntervalMin int    `yaml:"interval_min"` // 间隔分钟，默认 180
+	Job         string `yaml:"job"`          // full | fetch | quality
+	RunOnStart  bool   `yaml:"run_on_start"` // 启动后是否立即跑一轮
+	SkipAI      bool   `yaml:"skip_ai"`      // full 时跳过 AI 探测（更快）
+	MaxTest     int    `yaml:"max_test"`     // 测速上限
+	Rounds      int    `yaml:"rounds"`       // 测速轮数
+	JitterSec   int    `yaml:"jitter_sec"`   // 启动抖动，避免整点齐打
 }
 
 // PublishConfig 对外订阅发布（VPS 远程拉取）
 type PublishConfig struct {
-	Enabled      bool     `yaml:"enabled"`
-	Token        string   `yaml:"token"`       // 空=公开；非空则 ?token= 或 Bearer 必填
-	PathPrefix   string   `yaml:"path_prefix"` // 默认 /sub
-	MinScore     float64  `yaml:"min_score"`   // 默认用 filter.min_score
-	MaxNodes     int      `yaml:"max_nodes"`   // 默认用 filter.max_nodes
-	AliveOnly    bool     `yaml:"alive_only"`
-	Formats      []string `yaml:"formats"`   // raw, base64, clash
-	CacheSec     int      `yaml:"cache_sec"` // Cache-Control max-age
-	PublicURL    string   `yaml:"public_url"`
-	PreRender    bool     `yaml:"pre_render"`     // 任务后预渲染订阅
-	MaxCountries int      `yaml:"max_countries"`  // 分国家缓存上限
+	Enabled         bool     `yaml:"enabled"`
+	Token           string   `yaml:"token"`       // 空=公开；非空则 Bearer / X-Sub-Token 必填
+	PathPrefix      string   `yaml:"path_prefix"` // 默认 /sub
+	MinScore        float64  `yaml:"min_score"`   // 默认用 filter.min_score
+	MaxNodes        int      `yaml:"max_nodes"`   // 默认用 filter.max_nodes
+	MaxNodeAgeHours int      `yaml:"max_node_age_hours"`
+	AliveOnly       bool     `yaml:"alive_only"`
+	Formats         []string `yaml:"formats"`   // raw, base64, clash
+	CacheSec        int      `yaml:"cache_sec"` // Cache-Control max-age
+	PublicURL       string   `yaml:"public_url"`
+	PreRender       bool     `yaml:"pre_render"`    // 任务后预渲染订阅
+	MaxCountries    int      `yaml:"max_countries"` // 分国家缓存上限
 }
 
 type LoggingConfig struct {
@@ -168,6 +199,7 @@ func Default() *Config {
 			Dir:            "output",
 			Formats:        []string{"raw", "base64", "clash", "json"},
 			FilenamePrefix: "nodes",
+			KeepRuns:       48,
 		},
 		Schedule: ScheduleConfig{
 			Enabled:     false,
@@ -180,18 +212,20 @@ func Default() *Config {
 			JitterSec:   30,
 		},
 		Publish: PublishConfig{
-			Enabled:      true,
-			Token:        "",
-			PathPrefix:   "/sub",
-			AliveOnly:    true,
-			Formats:      []string{"raw", "base64", "clash"},
-			CacheSec:     120,
-			PreRender:    true,
-			MaxCountries: 30,
+			Enabled:         true,
+			Token:           "",
+			PathPrefix:      "/sub",
+			MaxNodeAgeHours: 24,
+			AliveOnly:       true,
+			Formats:         []string{"raw", "base64", "clash"},
+			CacheSec:        120,
+			PreRender:       true,
+			MaxCountries:    30,
 		},
 		Geo: GeoConfig{
 			Enabled:              true,
 			DBPath:               "data/GeoLite2-Country.mmdb",
+			ASNDBPath:            "data/GeoLite2-ASN.mmdb",
 			AutoDownload:         true,
 			AnnotateAfterQuality: true,
 			RenameWithFlag:       true,
@@ -202,26 +236,93 @@ func Default() *Config {
 			Concurrency:     4,
 			TimeoutSec:      18,
 			TestURL:         "https://www.cloudflare.com/cdn-cgi/trace",
+			DownloadBytes:   256 << 10,
+			SamplePercent:   10,
 			MaxNodes:        0, // 0=全部 HQ
 			BatchSize:       200,
 			AfterQuality:    false,
 			AfterQualityMax: 0, // 0=quality 后对全部 HQ 多轮真拨
 		},
 		Security: SecurityConfig{
-			AllowQueryToken: true,
+			AllowQueryToken: false,
 			SubRPS:          20,
 			SubBurst:        40,
 			APIRPS:          30,
 			APIBurst:        60,
+			LoginRPS:        0.2,
+			LoginBurst:      5,
 		},
 		Server: ServerConfig{
 			ReadHeaderTimeoutSec: 10,
+			ReadTimeoutSec:       30,
+			WriteTimeoutSec:      60,
+			IdleTimeoutSec:       120,
 			ShutdownTimeoutSec:   30,
+			MaxHeaderBytes:       1 << 20,
+			TrustedProxies:       []string{"127.0.0.1/32", "::1/128"},
 			EnableMetrics:        true,
 		},
 		SQLite: SQLiteConfig{
 			Enabled: true,
-			Path:    "data/node-hunter.db",
+			Path:    "data/nodeharvest.db",
+		},
+		Database: DatabaseConfig{
+			Enabled:             true,
+			Driver:              "sqlite",
+			DSN:                 "data/nodeharvest.db",
+			MaxOpenConns:        10,
+			MaxIdleConns:        5,
+			JobRetentionDays:    30,
+			AuditRetentionDays:  90,
+			MetricRetentionDays: 30,
+		},
+		Redis: RedisConfig{
+			Prefix:      "nodeharvest",
+			CacheTTLSec: 300,
+			LockTTLSec:  120,
+		},
+		ObjectStore: ObjectStoreConfig{Bucket: "nodeharvest", Prefix: "artifacts"},
+		Queue: QueueConfig{
+			MaxPending:   1000,
+			LeaseSec:     120,
+			PollMS:       500,
+			MaxAttempts:  3,
+			RetryBaseSec: 5,
+		},
+		Auth: AuthConfig{
+			SessionTTLHours:   12,
+			SessionCookieName: "nh_session",
+			BootstrapTenant:   "default",
+			DefaultRole:       "viewer",
+			RoleClaim:         "role",
+			TenantClaim:       "tenant",
+		},
+		Governance: GovernanceConfig{
+			DisableAfterFailures: 5,
+			CooldownHours:        6,
+			HQDropPercent:        40,
+			CountrySharePercent:  80,
+			JobFailureThreshold:  2,
+		},
+		QualityV2: QualityV2Config{
+			Latency:    0.25,
+			Success:    0.25,
+			Stability:  0.15,
+			TLS:        0.10,
+			HTTP:       0.15,
+			Throughput: 0.10,
+		},
+		Observability: ObservabilityConfig{
+			ServiceName:      "nodeharvest",
+			SampleRatio:      0.1,
+			ExportTimeoutSec: 5,
+		},
+		Pools: []PoolConfig{
+			{Key: "global-hq", Name: "Global HQ", MinScore: 70, RefreshSec: 120, MaxNodes: 500},
+			{Key: "verified", Name: "Verified", MinScore: 60, RequireVerified: true, RefreshSec: 300, MaxNodes: 300},
+			{Key: "streaming", Name: "Streaming", MinScore: 70, MaxLatencyMS: 800, RefreshSec: 180, MaxNodes: 300},
+			{Key: "ai-friendly", Name: "AI Friendly", MinScore: 60, RequireAI: true, RefreshSec: 300, MaxNodes: 300},
+			{Key: "low-latency", Name: "Low Latency", MinScore: 50, MaxLatencyMS: 300, RefreshSec: 120, MaxNodes: 200},
 		},
 		Logging: LoggingConfig{Level: "info"},
 	}
@@ -231,12 +332,15 @@ func Default() *Config {
 func Load(path string) (*Config, error) {
 	cfg := Default()
 	if path == "" {
-		return cfg, nil
+		cfg.normalize()
+		return cfg, cfg.Validate()
 	}
+	// #nosec G304 -- path is the operator-supplied process configuration file, not request input.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return cfg, nil
+			cfg.normalize()
+			return cfg, cfg.Validate()
 		}
 		return nil, fmt.Errorf("read config: %w", err)
 	}
@@ -244,10 +348,87 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	cfg.normalize()
-	return cfg, nil
+	return cfg, cfg.Validate()
+}
+
+func (c *Config) Validate() error {
+	if c.App.Concurrency <= 0 || c.App.Concurrency > 4096 {
+		return fmt.Errorf("app.concurrency must be between 1 and 4096")
+	}
+	if c.Filter.MaxNodes < 0 || c.Filter.MaxStoreNodes < 0 {
+		return fmt.Errorf("filter node limits must not be negative")
+	}
+	if c.Dial.DownloadBytes < 1024 || c.Dial.DownloadBytes > 64<<20 {
+		return fmt.Errorf("dial.download_bytes must be between 1024 and 67108864")
+	}
+	if c.Dial.SamplePercent < 0 || c.Dial.SamplePercent > 100 {
+		return fmt.Errorf("dial.sample_percent must be between 0 and 100")
+	}
+	if c.Export.FilenamePrefix == "." || c.Export.FilenamePrefix == ".." ||
+		strings.ContainsAny(c.Export.FilenamePrefix, `/\`) {
+		return fmt.Errorf("export.filename_prefix must be a file name")
+	}
+	seenFormats := make(map[string]bool, len(c.Export.Formats))
+	for _, format := range c.Export.Formats {
+		var canonical string
+		switch strings.ToLower(strings.TrimSpace(format)) {
+		case "raw", "uri", "txt":
+			canonical = "raw"
+		case "base64", "sub", "subscription":
+			canonical = "base64"
+		case "clash", "yaml", "yml":
+			canonical = "clash"
+		case "json":
+			canonical = "json"
+		default:
+			return fmt.Errorf("unsupported export format %q", format)
+		}
+		if seenFormats[canonical] {
+			return fmt.Errorf("duplicate export format %q", format)
+		}
+		seenFormats[canonical] = true
+	}
+	switch c.Schedule.Job {
+	case "full", "fetch", "quality":
+	default:
+		return fmt.Errorf("unsupported schedule.job %q", c.Schedule.Job)
+	}
+	prefix := c.Publish.PathPrefix
+	if strings.ContainsAny(prefix, "{}?# \t\r\n") {
+		return fmt.Errorf("publish.path_prefix contains unsupported characters")
+	}
+	if prefix == "/metrics" || strings.HasPrefix(prefix, "/debug") ||
+		(prefix != "/api/sub" && (prefix == "/api" || strings.HasPrefix(prefix, "/api/"))) ||
+		(prefix != "/sub" && strings.HasPrefix(prefix, "/sub/")) {
+		return fmt.Errorf("publish.path_prefix %q conflicts with a built-in route", prefix)
+	}
+	seenNames := make(map[string]bool, len(c.Sources))
+	for _, source := range c.Sources {
+		if seenNames[source.Name] {
+			return fmt.Errorf("duplicate source name %q", source.Name)
+		}
+		seenNames[source.Name] = true
+		switch source.Type {
+		case "subscription", "raw", "clash":
+		default:
+			return fmt.Errorf("source %q has unsupported type %q", source.Name, source.Type)
+		}
+		u, err := url.Parse(source.URL)
+		if source.Enabled && (err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "") {
+			return fmt.Errorf("source %q has invalid URL", source.Name)
+		}
+		if source.MaxBytes <= 0 || source.MaxBytes > 128<<20 {
+			return fmt.Errorf("source %q max_bytes must be between 1 and 134217728", source.Name)
+		}
+		if source.Priority < 1 || source.Priority > 1000 {
+			return fmt.Errorf("source %q priority must be between 1 and 1000", source.Name)
+		}
+	}
+	return c.validateEnterprise()
 }
 
 func (c *Config) normalize() {
+	c.normalizeEnterprise()
 	if c.App.Concurrency <= 0 {
 		c.App.Concurrency = 64
 	}
@@ -268,6 +449,9 @@ func (c *Config) normalize() {
 	}
 	if len(c.Export.Formats) == 0 {
 		c.Export.Formats = []string{"raw", "base64", "clash"}
+	}
+	if c.Export.KeepRuns <= 0 {
+		c.Export.KeepRuns = 48
 	}
 	if c.Filter.SortBy == "" {
 		c.Filter.SortBy = "score"
@@ -301,11 +485,17 @@ func (c *Config) normalize() {
 		c.Publish.PathPrefix = "/" + c.Publish.PathPrefix
 	}
 	c.Publish.PathPrefix = strings.TrimRight(c.Publish.PathPrefix, "/")
+	if c.Publish.PathPrefix == "" {
+		c.Publish.PathPrefix = "/sub"
+	}
 	if c.Publish.MinScore <= 0 {
 		c.Publish.MinScore = c.Filter.MinScore
 	}
 	if c.Publish.MaxNodes <= 0 {
 		c.Publish.MaxNodes = c.Filter.MaxNodes
+	}
+	if c.Publish.MaxNodeAgeHours <= 0 {
+		c.Publish.MaxNodeAgeHours = 24
 	}
 	if len(c.Publish.Formats) == 0 {
 		c.Publish.Formats = []string{"raw", "base64", "clash"}
@@ -315,6 +505,9 @@ func (c *Config) normalize() {
 	}
 	if c.Geo.DBPath == "" {
 		c.Geo.DBPath = "data/GeoLite2-Country.mmdb"
+	}
+	if c.Geo.ASNDBPath == "" {
+		c.Geo.ASNDBPath = "data/GeoLite2-ASN.mmdb"
 	}
 	if c.Publish.MaxCountries <= 0 {
 		c.Publish.MaxCountries = 30
@@ -334,11 +527,23 @@ func (c *Config) normalize() {
 	if c.Server.ReadHeaderTimeoutSec <= 0 {
 		c.Server.ReadHeaderTimeoutSec = 10
 	}
+	if c.Server.ReadTimeoutSec <= 0 {
+		c.Server.ReadTimeoutSec = 30
+	}
+	if c.Server.WriteTimeoutSec <= 0 {
+		c.Server.WriteTimeoutSec = 60
+	}
+	if c.Server.IdleTimeoutSec <= 0 {
+		c.Server.IdleTimeoutSec = 120
+	}
 	if c.Server.ShutdownTimeoutSec <= 0 {
 		c.Server.ShutdownTimeoutSec = 30
 	}
+	if c.Server.MaxHeaderBytes <= 0 {
+		c.Server.MaxHeaderBytes = 1 << 20
+	}
 	if c.SQLite.Path == "" {
-		c.SQLite.Path = "data/node-hunter.db"
+		c.SQLite.Path = "data/nodeharvest.db"
 	}
 	if c.Dial.Concurrency <= 0 {
 		c.Dial.Concurrency = 4
@@ -356,21 +561,21 @@ func (c *Config) normalize() {
 	if c.Dial.Engine == "" {
 		c.Dial.Engine = "sing-box"
 	}
-	if v := strings.TrimSpace(os.Getenv("NODE_HUNTER_SINGBOX")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_SINGBOX")); v != "" {
 		c.Dial.Bin = v
 		c.Dial.Engine = "sing-box"
 	}
 	// 环境变量可覆盖 token / public url（部署友好）
-	if v := strings.TrimSpace(os.Getenv("NODE_HUNTER_TOKEN")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_TOKEN")); v != "" {
 		c.Publish.Token = v
 	}
-	if v := strings.TrimSpace(os.Getenv("NODE_HUNTER_PUBLIC_URL")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_PUBLIC_URL")); v != "" {
 		c.Publish.PublicURL = strings.TrimRight(v, "/")
 	}
-	if v := strings.TrimSpace(os.Getenv("NODE_HUNTER_ADMIN_TOKEN")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_ADMIN_TOKEN")); v != "" {
 		c.Security.AdminToken = v
 	}
-	if v := strings.TrimSpace(os.Getenv("NODE_HUNTER_SCHEDULE")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_SCHEDULE")); v != "" {
 		switch strings.ToLower(v) {
 		case "1", "true", "on", "yes", "enable", "enabled":
 			c.Schedule.Enabled = true
@@ -384,6 +589,12 @@ func (c *Config) normalize() {
 		}
 		if c.Sources[i].Name == "" {
 			c.Sources[i].Name = fmt.Sprintf("source-%d", i+1)
+		}
+		if c.Sources[i].Priority == 0 {
+			c.Sources[i].Priority = 50
+		}
+		if c.Sources[i].MaxBytes <= 0 {
+			c.Sources[i].MaxBytes = 32 << 20
 		}
 	}
 }
@@ -426,9 +637,23 @@ func (c *Config) EnabledSources() []Source {
 	out := make([]Source, 0, len(c.Sources))
 	for _, s := range c.Sources {
 		if s.Enabled && strings.TrimSpace(s.URL) != "" {
+			blocked := false
+			for _, country := range c.Governance.DisabledSourceCountries {
+				if strings.EqualFold(strings.TrimSpace(country), strings.TrimSpace(s.Jurisdiction)) &&
+					strings.TrimSpace(s.Jurisdiction) != "" {
+					blocked = true
+					break
+				}
+			}
+			if blocked {
+				continue
+			}
 			out = append(out, s)
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Priority > out[j].Priority
+	})
 	return out
 }
 

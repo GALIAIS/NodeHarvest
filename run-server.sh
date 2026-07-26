@@ -10,7 +10,7 @@ export CGO_ENABLED="${CGO_ENABLED:-0}"
 export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
 
 mkdir -p bin logs "$DATA_DIR" output
-if [ ! -x bin/node-hunter-server ]; then
-  go build -o bin/node-hunter-server ./cmd/server
+if [ ! -x bin/nodeharvest-server ]; then
+  go build -o bin/nodeharvest-server ./cmd/server
 fi
-exec ./bin/node-hunter-server -addr "$API_ADDR" -config "$CONFIG" -data "$DATA_DIR"
+exec ./bin/nodeharvest-server -addr "$API_ADDR" -config "$CONFIG" -data "$DATA_DIR"

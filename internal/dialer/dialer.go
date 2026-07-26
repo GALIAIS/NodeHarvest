@@ -20,7 +20,7 @@ import (
 
 	"golang.org/x/net/proxy"
 
-	"github.com/local/node-hunter/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
 )
 
 // Options 拨测选项
@@ -35,6 +35,8 @@ type Options struct {
 	Timeout time.Duration
 	// TestURL 经代理访问的 URL
 	TestURL string
+	// DownloadBytes is the maximum body size consumed for throughput measurement.
+	DownloadBytes int64
 	// WorkDir 临时配置目录
 	WorkDir string
 	// BasePort 本地 socks 起始端口
@@ -62,13 +64,16 @@ func New(opts Options) (*Dialer, error) {
 	if opts.TestURL == "" {
 		opts.TestURL = "https://www.cloudflare.com/cdn-cgi/trace"
 	}
+	if opts.DownloadBytes <= 0 {
+		opts.DownloadBytes = 256 << 10
+	}
 	if opts.WorkDir == "" {
-		opts.WorkDir = filepath.Join(os.TempDir(), "node-hunter-dial")
+		opts.WorkDir = filepath.Join(os.TempDir(), "nodeharvest-dial")
 	}
 	if opts.BasePort <= 0 {
 		opts.BasePort = 19000
 	}
-	_ = os.MkdirAll(opts.WorkDir, 0o755)
+	_ = os.MkdirAll(opts.WorkDir, 0o700)
 
 	bin, engine, err := resolveBinary(opts.Bin, opts.Engine)
 	if err != nil {
@@ -100,7 +105,7 @@ func resolveBinary(bin, engine string) (string, string, error) {
 		{"/usr/bin/sing-box", "sing-box"},
 		{"/usr/local/bin/xray", "xray"},
 		{"/opt/sing-box/sing-box", "sing-box"},
-		{"/opt/node-hunter/bin/sing-box", "sing-box"},
+		{"/opt/nodeharvest/bin/sing-box", "sing-box"},
 	}
 	if engine == "xray" {
 		candidates = []struct{ path, eng string }{
@@ -184,16 +189,11 @@ func (d *Dialer) testOne(ctx context.Context, n *model.Node) {
 		n.Dial = res
 		n.Verified = res.OK
 		if res.OK {
-			// 真测成功：抬分并打标
-			if n.Score < 85 {
-				n.Score = 85
-			}
 			// 用真测延迟修正
 			if res.LatencyMS > 0 {
 				n.Latency = time.Duration(res.LatencyMS) * time.Millisecond
 			}
 			n.Alive = true
-			n.Grade = model.AssignGrade(n.Score)
 			n.Tags = mergeTag(n.Tags, "verified")
 		} else {
 			n.Tags = mergeTag(n.Tags, "dial-fail")
@@ -204,39 +204,13 @@ func (d *Dialer) testOne(ctx context.Context, n *model.Node) {
 		res.Error = "unsupported protocol"
 		return
 	}
-	if d.engine != "sing-box" {
-		// 当前实现以 sing-box 为主；xray 可后续扩展
-		res.Error = "only sing-box engine implemented"
-		return
-	}
-
-	ob, err := BuildOutbound(n)
-	if err != nil {
-		res.Error = err.Error()
-		return
-	}
-
 	port := d.allocPort()
 	cfgPath := filepath.Join(d.opts.WorkDir, fmt.Sprintf("sb-%d-%s.json", port, n.ID))
 	logPath := cfgPath + ".log"
-
-	cfg := map[string]any{
-		"log": map[string]any{"level": "error", "output": logPath},
-		"inbounds": []any{
-			map[string]any{
-				"type":        "socks",
-				"tag":         "socks-in",
-				"listen":      "127.0.0.1",
-				"listen_port": port,
-			},
-		},
-		"outbounds": []any{
-			ob,
-			map[string]any{"type": "direct", "tag": "direct"},
-		},
-		"route": map[string]any{
-			"final": "proxy",
-		},
+	cfg, args, err := d.coreConfig(n, port, logPath)
+	if err != nil {
+		res.Error = err.Error()
+		return
 	}
 	raw, _ := json.Marshal(cfg)
 	if err := os.WriteFile(cfgPath, raw, 0o600); err != nil {
@@ -251,7 +225,9 @@ func (d *Dialer) testOne(ctx context.Context, n *model.Node) {
 	cctx, cancel := context.WithTimeout(ctx, d.opts.Timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(cctx, d.bin, "run", "-c", cfgPath)
+	args = append(args, cfgPath)
+	// #nosec G204 -- the operator-configured executable and generated config path are never derived from requests.
+	cmd := exec.CommandContext(cctx, d.bin, args...)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	if err := cmd.Start(); err != nil {
@@ -291,11 +267,14 @@ func (d *Dialer) testOne(ctx context.Context, n *model.Node) {
 	}
 	tr := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if contextDialer, ok := dialerSocks.(proxy.ContextDialer); ok {
+				return contextDialer.DialContext(ctx, network, addr)
+			}
 			return dialerSocks.Dial(network, addr)
 		},
 		// avoid keep-alive across tests
-		DisableKeepAlives: true,
-		TLSHandshakeTimeout: 8 * time.Second,
+		DisableKeepAlives:     true,
+		TLSHandshakeTimeout:   8 * time.Second,
 		ResponseHeaderTimeout: 10 * time.Second,
 	}
 	client := &http.Client{
@@ -314,14 +293,17 @@ func (d *Dialer) testOne(ctx context.Context, n *model.Node) {
 		res.Error = err.Error()
 		return
 	}
-	req.Header.Set("User-Agent", "node-hunter-dial/2.0")
+	req.Header.Set("User-Agent", "nodeharvest-dial/2.0")
 
-	t0 := time.Now()
-	resp, err := client.Do(req)
-	res.LatencyMS = time.Since(t0).Milliseconds()
+	measurement, err := measureHTTP(client, req, d.opts.DownloadBytes)
+	res.LatencyMS = measurement.HeaderMS
+	res.HTTPMS = measurement.TotalMS
+	res.DownloadBytes = measurement.Bytes
+	res.ThroughputBPS = measurement.ThroughputBPS
 	if err != nil {
 		res.Error = err.Error()
 		// attach last log lines if any
+		// #nosec G304 -- logPath is generated inside the private per-probe work directory.
 		if b, e := os.ReadFile(logPath); e == nil && len(b) > 0 {
 			msg := string(b)
 			if len(msg) > 200 {
@@ -331,15 +313,73 @@ func (d *Dialer) testOne(ctx context.Context, n *model.Node) {
 		}
 		return
 	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
-	res.StatusCode = resp.StatusCode
+	res.StatusCode = measurement.StatusCode
 	// 2xx/3xx 视为代理链路可用
-	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+	if measurement.StatusCode >= 200 && measurement.StatusCode < 400 {
 		res.OK = true
 		return
 	}
-	res.Error = fmt.Sprintf("http %d", resp.StatusCode)
+	res.Error = fmt.Sprintf("http %d", measurement.StatusCode)
+}
+
+func (d *Dialer) coreConfig(n *model.Node, port int, logPath string) (map[string]any, []string, error) {
+	if d.engine == "xray" {
+		outbound, err := BuildXrayOutbound(n)
+		if err != nil {
+			return nil, nil, err
+		}
+		return map[string]any{
+			"log": map[string]any{"loglevel": "warning", "error": logPath},
+			"inbounds": []any{map[string]any{
+				"listen": "127.0.0.1", "port": port, "protocol": "socks",
+				"settings": map[string]any{"auth": "noauth", "udp": true},
+			}},
+			"outbounds": []any{outbound},
+		}, []string{"run", "-config"}, nil
+	}
+	outbound, err := BuildOutbound(n)
+	if err != nil {
+		return nil, nil, err
+	}
+	return map[string]any{
+		"log": map[string]any{"level": "error", "output": logPath},
+		"inbounds": []any{map[string]any{
+			"type": "socks", "tag": "socks-in", "listen": "127.0.0.1", "listen_port": port,
+		}},
+		"outbounds": []any{outbound, map[string]any{"type": "direct", "tag": "direct"}},
+		"route":     map[string]any{"final": "proxy"},
+	}, []string{"run", "-c"}, nil
+}
+
+type httpMeasurement struct {
+	StatusCode    int
+	HeaderMS      int64
+	TotalMS       int64
+	Bytes         int64
+	ThroughputBPS int64
+}
+
+func measureHTTP(client *http.Client, req *http.Request, maxBytes int64) (httpMeasurement, error) {
+	var measurement httpMeasurement
+	started := time.Now()
+	// #nosec G704 -- req targets the operator-configured probe URL and is sent through the isolated proxy under test.
+	resp, err := client.Do(req)
+	measurement.HeaderMS = time.Since(started).Milliseconds()
+	if err != nil {
+		measurement.TotalMS = measurement.HeaderMS
+		return measurement, err
+	}
+	defer resp.Body.Close()
+	measurement.StatusCode = resp.StatusCode
+	bodyStarted := time.Now()
+	measurement.Bytes, err = io.Copy(io.Discard, io.LimitReader(resp.Body, maxBytes))
+	bodyDuration := time.Since(bodyStarted)
+	measurement.TotalMS = time.Since(started).Milliseconds()
+	if measurement.Bytes > 0 {
+		elapsedNS := max(bodyDuration.Nanoseconds(), 1)
+		measurement.ThroughputBPS = measurement.Bytes * int64(time.Second) / elapsedNS
+	}
+	return measurement, err
 }
 
 func mergeTag(tags []string, add string) []string {
@@ -376,7 +416,7 @@ func Summary(nodes []*model.Node) string {
 
 // InstallHint 提示
 func InstallHint() string {
-	return "curl -fsSL https://sing-box.app/install.sh | sh   # or place binary at /opt/node-hunter/bin/sing-box"
+	return "run deploy/install-singbox.sh (pinned version and SHA-256), or set dial.bin to a verified sing-box/xray binary"
 }
 
 // ParseProxyURL unused helper

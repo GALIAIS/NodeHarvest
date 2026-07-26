@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/local/node-hunter/internal/config"
-	"github.com/local/node-hunter/internal/model"
-	"github.com/local/node-hunter/internal/service"
-	"github.com/local/node-hunter/internal/timex"
+	"github.com/GALIAIS/NodeHarvest/internal/config"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/service"
+	"github.com/GALIAIS/NodeHarvest/internal/timex"
 )
 
 // Scheduler 周期性触发采集/测速/全流程
@@ -17,14 +17,15 @@ type Scheduler struct {
 	cfg *config.Config
 	svc *service.Service
 
-	mu       sync.Mutex
-	stopCh   chan struct{}
-	running  bool
-	lastRun  *time.Time
-	lastJob  *model.Job
-	lastErr  string
-	nextRun  *time.Time
-	runCount int
+	mu        sync.Mutex
+	stopCh    chan struct{}
+	doneCh    chan struct{}
+	running   bool
+	lastRun   *time.Time
+	lastJobID string
+	lastErr   string
+	nextRun   *time.Time
+	runCount  int
 }
 
 func New(cfg *config.Config, svc *service.Service) *Scheduler {
@@ -44,6 +45,9 @@ func (s *Scheduler) Start() {
 	}
 	s.running = true
 	s.stopCh = make(chan struct{})
+	s.doneCh = make(chan struct{})
+	stopCh := s.stopCh
+	doneCh := s.doneCh
 	s.mu.Unlock()
 
 	interval := s.cfg.ScheduleInterval()
@@ -54,27 +58,32 @@ func (s *Scheduler) Start() {
 		"skip_ai", s.cfg.Schedule.SkipAI,
 	)
 
-	go s.loop(interval)
+	go s.loop(interval, stopCh, doneCh)
 }
 
 func (s *Scheduler) Stop() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if !s.running {
+		s.mu.Unlock()
 		return
 	}
 	close(s.stopCh)
 	s.running = false
+	done := s.doneCh
+	s.mu.Unlock()
+	<-done
 }
 
-func (s *Scheduler) loop(interval time.Duration) {
+func (s *Scheduler) loop(interval time.Duration, stopCh <-chan struct{}, doneCh chan<- struct{}) {
+	defer close(doneCh)
 	// 启动抖动
 	jitter := time.Duration(s.cfg.Schedule.JitterSec) * time.Second
 	if jitter > 0 {
+		// #nosec G404 -- scheduler jitter is load spreading, not a security decision or token.
 		d := time.Duration(rand.Int63n(int64(jitter) + 1))
 		s.setNext(time.Now().Add(d))
 		select {
-		case <-s.stopCh:
+		case <-stopCh:
 			return
 		case <-time.After(d):
 		}
@@ -90,7 +99,7 @@ func (s *Scheduler) loop(interval time.Duration) {
 
 	for {
 		select {
-		case <-s.stopCh:
+		case <-stopCh:
 			return
 		case t := <-ticker.C:
 			s.fire("interval")
@@ -137,13 +146,13 @@ func (s *Scheduler) fire(reason string) {
 	s.runCount++
 	if err != nil {
 		s.lastErr = err.Error()
-		s.lastJob = nil
+		s.lastJobID = ""
 		s.mu.Unlock()
 		slog.Warn("scheduler skip", "reason", reason, "job", jobType, "err", err)
 		return
 	}
 	s.lastErr = ""
-	s.lastJob = j
+	s.lastJobID = j.ID
 	s.mu.Unlock()
 	slog.Info("scheduler fired", "reason", reason, "job", jobType, "id", j.ID)
 }
@@ -174,13 +183,13 @@ func (s *Scheduler) Status() map[string]any {
 		out["next_run_at"] = timex.FormatRFC3339(*s.nextRun)
 	}
 	out["tz"] = "Asia/Shanghai"
-	if s.lastJob != nil {
+	if job, ok := s.svc.Job(s.lastJobID); ok {
 		out["last_job"] = map[string]any{
-			"id":       s.lastJob.ID,
-			"type":     s.lastJob.Type,
-			"status":   s.lastJob.Status,
-			"progress": s.lastJob.Progress,
-			"message":  s.lastJob.Message,
+			"id":       job.ID,
+			"type":     job.Type,
+			"status":   job.Status,
+			"progress": job.Progress,
+			"message":  job.Message,
 		}
 	}
 	return out

@@ -1,0 +1,11 @@
+replicaCount: 2
+worker:
+  replicas: 1
+  concurrency: 2
+image:
+  tag: staging
+hosts:
+  public: staging-node.example.com
+  admin: staging-admin.example.com
+serviceMonitor:
+  enabled: true

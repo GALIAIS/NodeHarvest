@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Copy, Filter, RefreshCw, Search } from "lucide-react";
-import { api, type NodeItem } from "@/lib/api";
+import { Copy, Filter, Globe2, RefreshCw, Search } from "lucide-react";
+import { api, type CountryRow, type NodeItem } from "@/lib/api";
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,14 +18,19 @@ export default function NodesPage() {
   const [q, setQ] = useState("");
   const [protocol, setProtocol] = useState("");
   const [grade, setGrade] = useState("");
+  const [country, setCountry] = useState("");
+  const [minScore, setMinScore] = useState(sp.get("hq") === "1" ? "70" : "");
   const [hq, setHq] = useState(sp.get("hq") === "1");
   const [alive, setAlive] = useState(true);
+  const [verified, setVerified] = useState(false);
   const [ai, setAi] = useState("");
+  const [countries, setCountries] = useState<CountryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState("");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (cursor = "", append = false) => {
     setLoading(true);
     try {
       const res = await api.nodes({
@@ -32,24 +38,33 @@ export default function NodesPage() {
         q: q || undefined,
         protocol: protocol || undefined,
         grade: grade || undefined,
+        country: country || undefined,
         hq: hq || undefined,
         alive: alive || undefined,
+        verified: verified || undefined,
         ai: ai || undefined,
-        min_score: hq ? 70 : undefined,
+        min_score: minScore || (hq ? 70 : undefined),
+        cursor: cursor || undefined,
       });
-      setNodes(res.nodes);
+      setNodes((current) => (append ? [...current, ...res.nodes] : res.nodes));
       setTotal(res.total);
+      setNextCursor(res.next_cursor || "");
       setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "加载失败");
     } finally {
       setLoading(false);
     }
-  }, [q, protocol, grade, hq, alive, ai]);
+  }, [q, protocol, grade, country, minScore, hq, alive, verified, ai]);
 
   useEffect(() => {
-    load();
+    const initial = setTimeout(load, 0);
+    return () => clearTimeout(initial);
   }, [load]);
+
+  useEffect(() => {
+    api.countries({ alive: true }).then((result) => setCountries(result.countries)).catch(() => {});
+  }, []);
 
   async function copyURI(uri: string, id: string) {
     try {
@@ -63,22 +78,19 @@ export default function NodesPage() {
 
   return (
     <div className="flex flex-1 flex-col">
-      <header className="flex items-center justify-between border-b border-slate-800/80 px-8 py-5">
-        <div>
-          <h1 className="font-[family-name:var(--font-display)] text-xl font-semibold">
-            节点库
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            筛选高质量节点 · 当前 {total} 条
-          </p>
-        </div>
-        <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
-          <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-          刷新
-        </Button>
-      </header>
+      <PageHeader
+        eyebrow="Node inventory"
+        title="节点资产库"
+        description={`按国家、协议、评分、真实拨测与 AI 可达性筛选 · 当前 ${total} 条`}
+        actions={
+          <Button variant="secondary" size="sm" onClick={() => load()} disabled={loading}>
+            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+            刷新
+          </Button>
+        }
+      />
 
-      <div className="space-y-4 p-8">
+      <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm">
@@ -111,6 +123,19 @@ export default function NodesPage() {
               )}
             </select>
             <select
+              className="h-10 min-w-36 px-3 text-sm"
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              aria-label="国家筛选"
+            >
+              <option value="">全部国家</option>
+              {countries.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.flag} {item.name || item.code} ({item.count})
+                </option>
+              ))}
+            </select>
+            <select
               className="h-10 rounded-md border border-slate-700 bg-slate-950 px-3 text-sm"
               value={grade}
               onChange={(e) => setGrade(e.target.value)}
@@ -122,6 +147,17 @@ export default function NodesPage() {
                 </option>
               ))}
             </select>
+            <label className="relative w-32">
+              <span className="sr-only">最低评分</span>
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                value={minScore}
+                onChange={(e) => setMinScore(e.target.value)}
+                placeholder="最低评分"
+              />
+            </label>
             <select
               className="h-10 rounded-md border border-slate-700 bg-slate-950 px-3 text-sm"
               value={ai}
@@ -154,6 +190,15 @@ export default function NodesPage() {
               />
               仅存活
             </label>
+            <label className="flex items-center gap-2 text-sm text-slate-400">
+              <input
+                type="checkbox"
+                checked={verified}
+                onChange={(e) => setVerified(e.target.checked)}
+                className="accent-emerald-400"
+              />
+              真实拨测
+            </label>
           </CardContent>
         </Card>
 
@@ -172,6 +217,7 @@ export default function NodesPage() {
                     <th>等级</th>
                     <th>分数</th>
                     <th>名称</th>
+                    <th>国家</th>
                     <th>协议</th>
                     <th>地址</th>
                     <th>延迟</th>
@@ -204,6 +250,11 @@ export default function NodesPage() {
                         </td>
                         <td className="max-w-[180px] truncate" title={n.name}>
                           {n.name}
+                        </td>
+                        <td className="font-mono text-xs text-slate-500">
+                          <span className="inline-flex items-center gap-1">
+                            <Globe2 className="h-3 w-3" /> {n.country || "ZZ"}
+                          </span>
                         </td>
                         <td>
                           <Badge variant="secondary" className="font-mono">
@@ -241,8 +292,9 @@ export default function NodesPage() {
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => copyURI(n.raw_uri, n.id)}
-                            title="复制 URI"
+                            onClick={() => n.raw_uri && copyURI(n.raw_uri, n.id)}
+                            disabled={!n.raw_uri}
+                            title={n.raw_uri ? "复制 URI" : "输入管理 Token 后可复制"}
                           >
                             <Copy className="h-3.5 w-3.5" />
                             {copied === n.id ? "OK" : ""}
@@ -251,9 +303,9 @@ export default function NodesPage() {
                       </tr>
                     );
                   })}
-                  {nodes.length === 0 && (
+          {nodes.length === 0 && (
                     <tr>
-                      <td colSpan={11} className="py-12 text-center text-slate-500">
+                      <td colSpan={12} className="py-12 text-center text-slate-500">
                         无匹配节点
                       </td>
                     </tr>
@@ -263,6 +315,17 @@ export default function NodesPage() {
             </div>
           </CardContent>
         </Card>
+        {nextCursor && (
+          <div className="flex justify-center">
+            <Button
+              variant="secondary"
+              disabled={loading}
+              onClick={() => load(nextCursor, true)}
+            >
+              {loading ? "加载中…" : `继续加载（已显示 ${nodes.length}/${total}）`}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

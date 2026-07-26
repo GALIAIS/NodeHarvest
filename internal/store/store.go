@@ -1,76 +1,215 @@
 package store
 
 import (
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- retained only for backward-compatible, non-cryptographic node IDs.
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/local/node-hunter/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
 )
 
 // Store 内存 + 磁盘快照
 type Store struct {
-	mu        sync.RWMutex
-	nodes     map[string]*model.Node
-	jobs      map[string]*model.Job
-	jobOrder  []string
-	dataDir   string
-	lastFetch *time.Time
-	lastQual  *time.Time
-	hostAI    map[string]*model.AIProbeResult
+	mu         sync.RWMutex
+	nodes      map[string]*model.Node
+	jobs       map[string]*model.Job
+	jobOrder   []string
+	dataDir    string
+	lastFetch  *time.Time
+	lastQual   *time.Time
+	hostAI     map[string]*model.AIProbeResult
+	persistent bool
 }
 
-func New(dataDir string) *Store {
+func New(dataDir string) (*Store, error) {
 	if dataDir == "" {
 		dataDir = "data"
 	}
-	_ = os.MkdirAll(dataDir, 0o755)
-	s := &Store{
-		nodes:   make(map[string]*model.Node),
-		jobs:    make(map[string]*model.Job),
-		dataDir: dataDir,
-		hostAI:  make(map[string]*model.AIProbeResult),
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return nil, err
 	}
-	_ = s.Load()
-	return s
+	// #nosec G302 -- dataDir is a directory and 0700 is the restrictive directory mode.
+	if err := os.Chmod(dataDir, 0o700); err != nil {
+		return nil, err
+	}
+	s := &Store{
+		nodes:      make(map[string]*model.Node),
+		jobs:       make(map[string]*model.Job),
+		dataDir:    dataDir,
+		hostAI:     make(map[string]*model.AIProbeResult),
+		persistent: true,
+	}
+	if err := s.Load(); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("load snapshot: %w", err)
+	}
+	return s, nil
+}
+
+func NewMemory() *Store {
+	return &Store{
+		nodes:  make(map[string]*model.Node),
+		jobs:   make(map[string]*model.Job),
+		hostAI: make(map[string]*model.AIProbeResult),
+	}
 }
 
 func nodeID(n *model.Node) string {
-	if n.ID != "" {
-		return n.ID
-	}
-	h := sha1.Sum([]byte(n.Key() + "|" + n.RawURI))
+	// #nosec G401 -- changing this legacy non-security digest would orphan persisted node history.
+	h := sha1.Sum([]byte(n.Key()))
 	return hex.EncodeToString(h[:8])
 }
 
-func (s *Store) ReplaceNodes(nodes []*model.Node) {
+func cloneNode(n *model.Node) *model.Node {
+	if n == nil {
+		return nil
+	}
+	cp := *n
+	cp.Sources = append([]string(nil), n.Sources...)
+	cp.Tags = append([]string(nil), n.Tags...)
+	if n.Extra != nil {
+		cp.Extra = make(map[string]string, len(n.Extra))
+		for key, value := range n.Extra {
+			cp.Extra[key] = value
+		}
+	}
+	if n.Quality != nil {
+		q := *n.Quality
+		q.Notes = append([]string(nil), n.Quality.Notes...)
+		if n.Quality.Breakdown != nil {
+			q.Breakdown = make(map[string]float64, len(n.Quality.Breakdown))
+			for key, value := range n.Quality.Breakdown {
+				q.Breakdown[key] = value
+			}
+		}
+		cp.Quality = &q
+	}
+	if n.AIAccess != nil {
+		cp.AIAccess = make(map[string]*model.AIProbeResult, len(n.AIAccess))
+		for key, value := range n.AIAccess {
+			if value != nil {
+				result := *value
+				cp.AIAccess[key] = &result
+			}
+		}
+	}
+	if n.Dial != nil {
+		result := *n.Dial
+		cp.Dial = &result
+	}
+	if n.Purity != nil {
+		result := *n.Purity
+		result.Notes = append([]string(nil), n.Purity.Notes...)
+		cp.Purity = &result
+	}
+	return &cp
+}
+
+func cloneJob(j *model.Job) *model.Job {
+	if j == nil {
+		return nil
+	}
+	cp := *j
+	if j.Stats != nil {
+		cp.Stats = make(map[string]any, len(j.Stats))
+		for key, value := range j.Stats {
+			cp.Stats[key] = value
+		}
+	}
+	if j.Options != nil {
+		cp.Options = make(map[string]any, len(j.Options))
+		for key, value := range j.Options {
+			cp.Options[key] = value
+		}
+	}
+	return &cp
+}
+
+func (s *Store) ReplaceNodes(nodes []*model.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	oldByKey := make(map[string]*model.Node, len(s.nodes))
+	for _, n := range s.nodes {
+		oldByKey[n.Key()] = n
+	}
 	s.nodes = make(map[string]*model.Node, len(nodes))
+	now := time.Now()
 	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		if old := oldByKey[n.Key()]; old != nil {
+			mergeObservations(n, old)
+		}
+		if n.FirstSeenAt.IsZero() {
+			n.FirstSeenAt = now
+		}
+		if n.LastSeenAt.IsZero() {
+			n.LastSeenAt = now
+		}
 		id := nodeID(n)
 		n.ID = id
 		n.Fingerprint = n.Key()
-		cp := *n
-		s.nodes[id] = &cp
+		s.nodes[id] = cloneNode(n)
 	}
-	now := time.Now()
 	s.lastFetch = &now
-	_ = s.persistLocked()
+	return s.persistLocked()
 }
 
-func (s *Store) UpsertNodes(nodes []*model.Node) {
+func mergeObservations(dst, old *model.Node) {
+	if dst.FirstSeenAt.IsZero() {
+		dst.FirstSeenAt = old.FirstSeenAt
+	}
+	if dst.LastSeenAt.IsZero() {
+		dst.LastSeenAt = old.LastSeenAt
+	}
+	if dst.TestedAt.IsZero() {
+		dst.Alive = old.Alive
+		dst.Latency = old.Latency
+		dst.Error = old.Error
+		dst.TestedAt = old.TestedAt
+		dst.Quality = old.Quality
+		dst.Score = old.Score
+		dst.Grade = old.Grade
+		dst.Tags = old.Tags
+		dst.QualityFailures = old.QualityFailures
+		dst.SuccessStreak = old.SuccessStreak
+		dst.NextTestAt = old.NextTestAt
+	}
+	if dst.Country == "" {
+		dst.Country = old.Country
+		dst.City = old.City
+		dst.ISP = old.ISP
+		dst.ASN = old.ASN
+		dst.EntryType = old.EntryType
+	}
+	if dst.AIAccess == nil {
+		dst.AIAccess = old.AIAccess
+	}
+	if dst.Dial == nil {
+		dst.Dial = old.Dial
+		dst.Verified = old.Verified
+	}
+	if dst.Purity == nil {
+		dst.Purity = old.Purity
+	}
+}
+
+func (s *Store) UpsertNodes(nodes []*model.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, n := range nodes {
 		id := nodeID(n)
 		n.ID = id
+		n = cloneNode(n)
 		if old, ok := s.nodes[id]; ok {
 			old.Alive = n.Alive
 			old.Latency = n.Latency
@@ -80,6 +219,15 @@ func (s *Store) UpsertNodes(nodes []*model.Node) {
 			old.AIAccess = n.AIAccess
 			old.Score = n.Score
 			old.Grade = n.Grade
+			old.QualityFailures = n.QualityFailures
+			old.SuccessStreak = n.SuccessStreak
+			old.NextTestAt = n.NextTestAt
+			if !n.FirstSeenAt.IsZero() {
+				old.FirstSeenAt = n.FirstSeenAt
+			}
+			if !n.LastSeenAt.IsZero() {
+				old.LastSeenAt = n.LastSeenAt
+			}
 			if len(n.Tags) > 0 {
 				old.Tags = n.Tags
 			}
@@ -92,6 +240,12 @@ func (s *Store) UpsertNodes(nodes []*model.Node) {
 			}
 			if n.ISP != "" {
 				old.ISP = n.ISP
+			}
+			if n.ASN != "" {
+				old.ASN = n.ASN
+			}
+			if n.EntryType != "" {
+				old.EntryType = n.EntryType
 			}
 			if n.Dial != nil {
 				old.Dial = n.Dial
@@ -108,13 +262,12 @@ func (s *Store) UpsertNodes(nodes []*model.Node) {
 				old.RawURI = n.RawURI
 			}
 		} else {
-			cp := *n
-			s.nodes[id] = &cp
+			s.nodes[id] = n
 		}
 	}
 	now := time.Now()
 	s.lastQual = &now
-	_ = s.persistLocked()
+	return s.persistLocked()
 }
 
 func (s *Store) ListNodes(filter NodeFilter) []*model.Node {
@@ -125,8 +278,7 @@ func (s *Store) ListNodes(filter NodeFilter) []*model.Node {
 		if !filter.Match(n) {
 			continue
 		}
-		cp := *n
-		out = append(out, &cp)
+		out = append(out, cloneNode(n))
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Score != out[j].Score {
@@ -135,7 +287,10 @@ func (s *Store) ListNodes(filter NodeFilter) []*model.Node {
 		if out[i].Latency != out[j].Latency {
 			return out[i].Latency < out[j].Latency
 		}
-		return out[i].Name < out[j].Name
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
 	})
 	if filter.Limit > 0 && len(out) > filter.Limit {
 		out = out[:filter.Limit]
@@ -150,14 +305,19 @@ func (s *Store) GetNode(id string) (*model.Node, bool) {
 	if !ok {
 		return nil, false
 	}
-	cp := *n
-	return &cp, true
+	return cloneNode(n), true
 }
 
 func (s *Store) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.nodes)
+}
+
+func (s *Store) Flush() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persistLocked()
 }
 
 func (s *Store) AllNodes() []*model.Node {
@@ -228,11 +388,11 @@ func (s *Store) Stats(sourcesEnabled int) model.DashboardStats {
 	return st
 }
 
-func (s *Store) SetHostAI(m map[string]*model.AIProbeResult) {
+func (s *Store) SetHostAI(m map[string]*model.AIProbeResult) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.hostAI = m
-	_ = s.persistLocked()
+	return s.persistLocked()
 }
 
 func (s *Store) HostAI() map[string]*model.AIProbeResult {
@@ -252,8 +412,7 @@ func (s *Store) SaveJob(j *model.Job) {
 	if _, ok := s.jobs[j.ID]; !ok {
 		s.jobOrder = append(s.jobOrder, j.ID)
 	}
-	cp := *j
-	s.jobs[j.ID] = &cp
+	s.jobs[j.ID] = cloneJob(j)
 }
 
 func (s *Store) GetJob(id string) (*model.Job, bool) {
@@ -263,22 +422,31 @@ func (s *Store) GetJob(id string) (*model.Job, bool) {
 	if !ok {
 		return nil, false
 	}
-	cp := *j
-	return &cp, true
+	return cloneJob(j), true
 }
 
 func (s *Store) ListJobs(limit int) []*model.Job {
+	return s.ListJobsPage(limit, "")
+}
+
+func (s *Store) ListJobsPage(limit int, cursor string) []*model.Job {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if limit <= 0 {
 		limit = 20
 	}
 	out := make([]*model.Job, 0, limit)
+	started := cursor == ""
 	for i := len(s.jobOrder) - 1; i >= 0 && len(out) < limit; i-- {
 		id := s.jobOrder[i]
+		if !started {
+			if id == cursor {
+				started = true
+			}
+			continue
+		}
 		if j, ok := s.jobs[id]; ok {
-			cp := *j
-			out = append(out, &cp)
+			out = append(out, cloneJob(j))
 		}
 	}
 	return out
@@ -297,13 +465,14 @@ type NodeFilter struct {
 	Limit        int
 	HighQuality  bool
 	VerifiedOnly bool // 仅真实拨测通过
+	SeenAfter    time.Time
 }
 
 func (f NodeFilter) Match(n *model.Node) bool {
 	if f.Protocol != "" && string(n.Protocol) != f.Protocol {
 		return false
 	}
-	if f.Source != "" && n.Source != f.Source {
+	if f.Source != "" && n.Source != f.Source && !slices.Contains(n.Sources, f.Source) {
 		return false
 	}
 	if f.Grade != "" && n.Grade != f.Grade {
@@ -337,6 +506,9 @@ func (f NodeFilter) Match(n *model.Node) bool {
 	if f.VerifiedOnly && !n.Verified {
 		return false
 	}
+	if !f.SeenAfter.IsZero() && !n.LastSeenAt.IsZero() && n.LastSeenAt.Before(f.SeenAfter) {
+		return false
+	}
 	if f.AIKey != "" {
 		r, ok := n.AIAccess[f.AIKey]
 		if !ok || r == nil || !r.OK {
@@ -345,7 +517,8 @@ func (f NodeFilter) Match(n *model.Node) bool {
 	}
 	if f.Search != "" {
 		q := strings.ToLower(f.Search)
-		blob := strings.ToLower(n.Name + " " + n.Server + " " + n.Source + " " + string(n.Protocol) + " " + n.Country + " " + n.City)
+		blob := strings.ToLower(n.Name + " " + n.Server + " " + n.Source + " " +
+			strings.Join(n.Sources, " ") + " " + string(n.Protocol) + " " + n.Country + " " + n.City)
 		if !strings.Contains(blob, q) {
 			return false
 		}
@@ -361,6 +534,9 @@ type snapshot struct {
 }
 
 func (s *Store) persistLocked() error {
+	if !s.persistent {
+		return nil
+	}
 	nodes := make([]*model.Node, 0, len(s.nodes))
 	for _, n := range s.nodes {
 		nodes = append(nodes, n)
@@ -385,11 +561,43 @@ func (s *Store) persistLocked() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(s.dataDir, "snapshot.json"), b, 0o644)
+	path := filepath.Join(s.dataDir, "snapshot.json")
+	tmp, err := os.CreateTemp(s.dataDir, "snapshot-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err == nil {
+		return nil
+	} else if runtime.GOOS != "windows" {
+		return err
+	}
+	// Windows 不能原子覆盖已有文件；生产 Linux 走上面的原子 rename。
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func (s *Store) Load() error {
 	path := filepath.Join(s.dataDir, "snapshot.json")
+	// #nosec G304 -- path is fixed to snapshot.json under the private configured data directory.
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -402,8 +610,13 @@ func (s *Store) Load() error {
 	defer s.mu.Unlock()
 	s.nodes = make(map[string]*model.Node, len(snap.Nodes))
 	for _, n := range snap.Nodes {
-		if n.ID == "" {
-			n.ID = nodeID(n)
+		n.ID = nodeID(n)
+		n.Fingerprint = n.Key()
+		if n.FirstSeenAt.IsZero() {
+			n.FirstSeenAt = time.Now()
+		}
+		if n.LastSeenAt.IsZero() {
+			n.LastSeenAt = n.FirstSeenAt
 		}
 		s.nodes[n.ID] = n
 	}
@@ -435,7 +648,7 @@ type PruneOptions struct {
 }
 
 // Prune 清理低质量/死亡节点，返回删除数量
-func (s *Store) Prune(opt PruneOptions) int {
+func (s *Store) Prune(opt PruneOptions) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -446,7 +659,7 @@ func (s *Store) Prune(opt PruneOptions) int {
 			continue
 		}
 		tested := !n.TestedAt.IsZero()
-		if opt.DropDead && tested && !n.Alive {
+		if opt.DropDead && tested && !n.Alive && n.QualityFailures >= 3 {
 			continue
 		}
 		if opt.MinScoreKeep > 0 && tested && n.Score < opt.MinScoreKeep {
@@ -478,6 +691,6 @@ func (s *Store) Prune(opt PruneOptions) int {
 	for _, n := range kept {
 		s.nodes[n.ID] = n
 	}
-	_ = s.persistLocked()
-	return before - len(s.nodes)
+	err := s.persistLocked()
+	return before - len(s.nodes), err
 }

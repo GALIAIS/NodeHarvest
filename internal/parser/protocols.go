@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/local/node-hunter/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
 )
 
 // ---------- VMess ----------
@@ -29,6 +29,9 @@ type vmessJSON struct {
 	TLS  string `json:"tls"`
 	SNI  string `json:"sni"`
 	Alpn string `json:"alpn"`
+	// Providers use both spellings and encode them as either booleans or strings.
+	AllowInsecure any `json:"allowInsecure"`
+	Insecure      any `json:"insecure"`
 }
 
 func parseVMess(raw, source string) (*model.Node, error) {
@@ -66,6 +69,13 @@ func parseVMess(raw, source string) (*model.Node, error) {
 	if name == "" {
 		name = fmt.Sprintf("vmess-%s-%d", j.Add, port)
 	}
+	extra := map[string]string{"type": j.Type, "aid": fmt.Sprint(j.Aid)}
+	if j.AllowInsecure != nil {
+		extra["allowInsecure"] = fmt.Sprint(j.AllowInsecure)
+	}
+	if j.Insecure != nil {
+		extra["insecure"] = fmt.Sprint(j.Insecure)
+	}
 	n := &model.Node{
 		Protocol: model.ProtoVMess,
 		Name:     name,
@@ -81,7 +91,7 @@ func parseVMess(raw, source string) (*model.Node, error) {
 		ALPN:     j.Alpn,
 		RawURI:   raw,
 		Source:   source,
-		Extra:    map[string]string{"type": j.Type, "aid": fmt.Sprint(j.Aid)},
+		Extra:    extra,
 	}
 	n.Fingerprint = n.Key()
 	return n, nil
@@ -118,13 +128,14 @@ func parseVLESS(raw, source string) (*model.Node, error) {
 		RawURI:   raw,
 		Source:   source,
 		Extra: map[string]string{
-			"fp":               queryGet(q, "fp"),
-			"pbk":              queryGet(q, "pbk"),
-			"sid":              queryGet(q, "sid"),
-			"spx":              queryGet(q, "spx"),
-			"serviceName":      queryGet(q, "serviceName"),
-			"headerType":       queryGet(q, "headerType"),
-			"mode":             queryGet(q, "mode"),
+			"fp":          queryGet(q, "fp"),
+			"pbk":         queryGet(q, "pbk"),
+			"sid":         queryGet(q, "sid"),
+			"spx":         queryGet(q, "spx"),
+			"serviceName": queryGet(q, "serviceName"),
+			"headerType":  queryGet(q, "headerType"),
+			"mode":        queryGet(q, "mode"),
+			"insecure":    queryGet(q, "insecure", "allowInsecure", "skip-cert-verify"),
 		},
 	}
 	n.Fingerprint = n.Key()
@@ -162,6 +173,9 @@ func parseTrojan(raw, source string) (*model.Node, error) {
 		ALPN:     queryGet(q, "alpn"),
 		RawURI:   raw,
 		Source:   source,
+		Extra: map[string]string{
+			"insecure": queryGet(q, "insecure", "allowInsecure", "skip-cert-verify"),
+		},
 	}
 	n.Fingerprint = n.Key()
 	return n, nil
@@ -335,9 +349,9 @@ func parseHysteria2(raw, source string) (*model.Node, error) {
 		RawURI:   raw,
 		Source:   source,
 		Extra: map[string]string{
-			"obfs":       queryGet(q, "obfs"),
+			"obfs":          queryGet(q, "obfs"),
 			"obfs-password": queryGet(q, "obfs-password", "obfsPassword"),
-			"insecure":   queryGet(q, "insecure"),
+			"insecure":      queryGet(q, "insecure", "allowInsecure", "skip-cert-verify"),
 		},
 	}
 	n.Fingerprint = n.Key()
@@ -374,6 +388,7 @@ func parseTUIC(raw, source string) (*model.Node, error) {
 		Extra: map[string]string{
 			"congestion_control": queryGet(q, "congestion_control", "congestion-control"),
 			"udp_relay_mode":     queryGet(q, "udp_relay_mode", "udp-relay-mode"),
+			"insecure":           queryGet(q, "insecure", "allowInsecure", "skip-cert-verify"),
 		},
 	}
 	n.Fingerprint = n.Key()

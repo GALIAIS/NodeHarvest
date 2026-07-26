@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/local/node-hunter/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
 )
 
 var (

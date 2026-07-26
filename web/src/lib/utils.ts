@@ -20,6 +20,29 @@ export function formatTime(iso?: string | null) {
   }
 }
 
+export function formatBytes(bytes?: number | null) {
+  if (bytes == null || bytes < 1) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GiB`;
+}
+
+export function formatDuration(seconds?: number | null) {
+  if (seconds == null || seconds < 0) return "—";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days) return `${days}天 ${hours}小时`;
+  if (hours) return `${hours}小时 ${minutes}分`;
+  return `${minutes}分`;
+}
+
+export function formatPercent(value?: number | null, digits = 0) {
+  if (value == null || Number.isNaN(value)) return "—";
+  return `${(value * 100).toFixed(digits)}%`;
+}
+
 export function gradeColor(grade?: string) {
   switch (grade) {
     case "S":

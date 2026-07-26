@@ -2,23 +2,28 @@ package fetcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/local/node-hunter/internal/config"
+	"github.com/GALIAIS/NodeHarvest/internal/config"
 )
 
 // Document 拉取到的原始文档
 type Document struct {
-	Source  config.Source
-	Body    string
-	Err     error
-	Latency time.Duration
-	Bytes   int
+	Source     config.Source
+	Body       string
+	Err        error
+	Latency    time.Duration
+	Bytes      int
+	StatusCode int
+	Attempts   int
 }
 
 // Fetcher HTTP 抓取器
@@ -44,6 +49,9 @@ func New(timeout time.Duration, userAgent string) *Fetcher {
 
 // FetchAll 并发拉取所有源
 func (f *Fetcher) FetchAll(ctx context.Context, sources []config.Source, workers int) []Document {
+	if len(sources) == 0 {
+		return nil
+	}
 	if workers <= 0 {
 		workers = 8
 	}
@@ -62,10 +70,11 @@ func (f *Fetcher) FetchAll(ctx context.Context, sources []config.Source, workers
 	}
 
 	go func() {
+	send:
 		for _, s := range sources {
 			select {
 			case <-ctx.Done():
-				return
+				break send
 			case in <- s:
 			}
 		}
@@ -78,6 +87,12 @@ func (f *Fetcher) FetchAll(ctx context.Context, sources []config.Source, workers
 	for d := range out {
 		docs = append(docs, d)
 	}
+	sort.SliceStable(docs, func(i, j int) bool {
+		if docs[i].Source.Priority != docs[j].Source.Priority {
+			return docs[i].Source.Priority > docs[j].Source.Priority
+		}
+		return docs[i].Source.Name < docs[j].Source.Name
+	})
 	return docs
 }
 
@@ -85,7 +100,28 @@ func (f *Fetcher) FetchAll(ctx context.Context, sources []config.Source, workers
 func (f *Fetcher) FetchOne(ctx context.Context, src config.Source) Document {
 	start := time.Now()
 	doc := Document{Source: src}
+	for attempt := 1; attempt <= 3; attempt++ {
+		doc = f.fetchAttempt(ctx, src)
+		doc.Attempts = attempt
+		doc.Latency = time.Since(start)
+		if doc.Err == nil || !retryable(doc.StatusCode, doc.Err) || attempt == 3 {
+			return doc
+		}
+		delay := time.Duration(attempt*250) * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			doc.Err = ctx.Err()
+			return doc
+		case <-timer.C:
+		}
+	}
+	return doc
+}
 
+func (f *Fetcher) fetchAttempt(ctx context.Context, src config.Source) Document {
+	doc := Document{Source: src}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src.URL, nil)
 	if err != nil {
 		doc.Err = err
@@ -97,29 +133,42 @@ func (f *Fetcher) FetchOne(ctx context.Context, src config.Source) Document {
 
 	resp, err := f.client.Do(req)
 	if err != nil {
-		doc.Err = err
-		doc.Latency = time.Since(start)
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			doc.Err = urlErr.Err
+		} else {
+			doc.Err = err
+		}
 		return doc
 	}
 	defer resp.Body.Close()
+	doc.StatusCode = resp.StatusCode
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		doc.Err = fmt.Errorf("http %d", resp.StatusCode)
-		doc.Latency = time.Since(start)
 		return doc
 	}
 
-	// 限制 32MB（部分聚合源如 SubCrawler 可达 20MB+）
-	limited := io.LimitReader(resp.Body, 32<<20)
+	maxBytes := src.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = 32 << 20
+	}
+	if resp.ContentLength > maxBytes {
+		doc.Err = fmt.Errorf("response too large: %d > %d bytes", resp.ContentLength, maxBytes)
+		return doc
+	}
+	limited := io.LimitReader(resp.Body, maxBytes+1)
 	b, err := io.ReadAll(limited)
 	if err != nil {
 		doc.Err = err
-		doc.Latency = time.Since(start)
+		return doc
+	}
+	if int64(len(b)) > maxBytes {
+		doc.Err = fmt.Errorf("response exceeds %d bytes", maxBytes)
 		return doc
 	}
 	doc.Body = string(b)
 	doc.Bytes = len(b)
-	doc.Latency = time.Since(start)
 
 	// 部分 CDN 返回 HTML 错误页
 	if looksLikeHTMLError(doc.Body) {
@@ -133,8 +182,25 @@ func looksLikeHTMLError(body string) bool {
 	if len(sample) > 512 {
 		sample = sample[:512]
 	}
-	if strings.Contains(sample, "<html") && (strings.Contains(sample, "404") || strings.Contains(sample, "not found")) {
+	return strings.Contains(sample, "<html") ||
+		strings.Contains(sample, "<!doctype html") ||
+		strings.Contains(sample, "<title>404") ||
+		strings.Contains(sample, "repository not found")
+}
+
+func retryable(status int, err error) bool {
+	if err == nil {
+		return false
+	}
+	if status == 0 {
 		return true
 	}
-	return false
+	switch status {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests,
+		http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }

@@ -1,0 +1,38 @@
+[Unit]
+Description=NodeHarvest API + scheduler + subscription publisher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nodeharvest
+Group=nodeharvest
+WorkingDirectory=/opt/nodeharvest
+ExecStart=/opt/nodeharvest/current/bin/nodeharvest-server -addr 0.0.0.0:8080 -config configs/config.yaml -data data -web current/web
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+# 环境变量（也可用 EnvironmentFile）
+Environment=NODE_HARVEST_SCHEDULE=1
+Environment=TZ=Asia/Shanghai
+EnvironmentFile=/etc/nodeharvest/nodeharvest.env
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/opt/nodeharvest/data /opt/nodeharvest/output
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

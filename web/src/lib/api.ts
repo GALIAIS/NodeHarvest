@@ -1,4 +1,5 @@
 export type Quality = {
+  score_version: string;
   rounds: number;
   success_rate: number;
   avg_latency_ms: number;
@@ -7,9 +8,12 @@ export type Quality = {
   jitter_ms: number;
   tls_ok: boolean;
   tls_ms?: number;
+  http_ms?: number;
+  throughput_bps?: number;
   edge_score: number;
   score: number;
   notes?: string[];
+  breakdown?: Record<string, number>;
 };
 
 export type AIProbeResult = {
@@ -29,19 +33,26 @@ export type NodeItem = {
   server: string;
   port: number;
   tls: boolean;
-  raw_uri: string;
+  raw_uri?: string;
   source: string;
+  sources?: string[];
   alive: boolean;
   latency_ms?: number;
   score: number;
   grade: string;
   country?: string;
   city?: string;
+  asn?: string;
+  entry_type?: string;
   tags?: string[];
   quality?: Quality;
   ai_access?: Record<string, AIProbeResult>;
   error?: string;
   tested_at?: string;
+  first_seen_at?: string;
+  last_seen_at?: string;
+  quality_failures?: number;
+  next_test_at?: string;
 };
 
 export type DashboardStats = {
@@ -82,11 +93,51 @@ export type Job = {
   ended_at?: string;
 };
 
+export type JobEvent = {
+  id: number;
+  job_id: string;
+  at: string;
+  level: string;
+  message: string;
+};
+
+export type QueuedTask = {
+  id: string;
+  type: string;
+  priority: number;
+  status: string;
+  attempts: number;
+  max_attempts: number;
+  available_at: string;
+  lease_until?: string;
+  worker_id?: string;
+  last_error?: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Source = {
   name: string;
   type: string;
   url: string;
   enabled: boolean;
+  effective_enabled: boolean;
+  manually_disabled: boolean;
+  disabled_until?: string;
+  priority: number;
+  max_bytes: number;
+  last_attempt_at?: string;
+  last_success_at?: string;
+  last_error?: string;
+  consecutive_failures: number;
+  fetch_count: number;
+  success_rate: number;
+  latency_ms: number;
+  bytes: number;
+  status_code: number;
+  contribution_total: number;
+  contribution_hq: number;
+  health_score: number;
 };
 
 export type AITarget = {
@@ -96,36 +147,195 @@ export type AITarget = {
   host: string;
 };
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export type Principal = {
+  kind: string;
+  token_id?: string;
+  name: string;
+  role: "viewer" | "operator" | "admin";
+  tenant_id: string;
+  subject?: string;
+  email?: string;
+  authenticated: boolean;
+};
+
+export type SessionInfo = {
+  authenticated: boolean;
+  principal: Principal;
+  oidc_enabled: boolean;
+  local_enabled: boolean;
+};
+
+export type TokenRecord = {
+  id: string;
+  name: string;
+  token_prefix: string;
+  enabled: boolean;
+  max_rps: number;
+  allow_countries?: string[];
+  allow_protocols?: string[];
+  tenant_id: string;
+  daily_quota: number;
+  requests_today: number;
+  bytes_today: number;
+  expires_at?: string;
+  created_at: string;
+  last_used_at?: string;
+  note?: string;
+  token?: string;
+};
+
+export type UserRecord = {
+  id: string;
+  tenant_id: string;
+  username: string;
+  email?: string;
+  role: "viewer" | "operator" | "admin";
+  enabled: boolean;
+  oidc_issuer?: string;
+  oidc_subject?: string;
+  created_at: string;
+  last_login_at?: string;
+};
+
+export type AuditEntry = {
+  id: number;
+  at: string;
+  actor: string;
+  action: string;
+  detail: string;
+};
+
+export type AlertRecord = {
+  id: string;
+  kind: string;
+  severity: string;
+  message: string;
+  details?: Record<string, unknown>;
+  active: boolean;
+  created_at: string;
+  resolved_at?: string;
+  acknowledged_at?: string;
+  acknowledged_by?: string;
+};
+
+export type DailyMetric = {
+  day: string;
+  samples: number;
+  success_rate: number;
+  p50_latency_ms: number;
+  p95_latency_ms: number;
+  avg_score: number;
+  avg_throughput_bps: number;
+};
+
+export type Pool = {
+  key: string;
+  title: string;
+  description: string;
+  count: number;
+  refresh_sec: number;
+  min_score: number;
+  max_nodes: number;
+  urls: Record<"raw" | "base64" | "clash", string>;
+};
+
+export type Health = {
+  ok: boolean;
+  time: string;
+  version: string;
+  uptime_sec: number;
+  nodes: number;
+  running_job: boolean;
+  geo_mmdb: boolean;
+  database: { driver: string; ok: boolean };
+  redis: { enabled: boolean; ok: boolean };
+  publish_count: number;
+  publish_updated_at?: string;
+  publish_fresh: boolean;
+  schedule: boolean;
+  sources_unhealthy: number;
+};
+
+export type ConfigVersion = {
+  id: string;
+  actor: string;
+  checksum: string;
+  patch_json: string;
+  created_at: string;
+};
+
+export type Terms = {
+  title: string;
+  terms_url?: string;
+  notice: string;
+  restrictions: string[];
+};
+
+function params(values: Record<string, string | number | boolean | undefined>) {
+  const query = new URLSearchParams();
+  Object.entries(values).forEach(([key, value]) => {
+    if (value === undefined || value === "") return;
+    query.set(key, String(value));
+  });
+  const encoded = query.toString();
+  return encoded ? `?${encoded}` : "";
+}
+
+async function request<T>(path: string, init?: RequestInit, acceptErrorStatus = false): Promise<T> {
+  const token =
+    typeof window === "undefined"
+      ? ""
+      : window.sessionStorage.getItem("nodeharvest-admin-token") || "";
   const res = await fetch(path, {
     ...init,
+    credentials: "same-origin",
     headers: {
-      "Content-Type": "application/json",
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { "X-Admin-Token": token } : {}),
       ...(init?.headers || {}),
     },
     cache: "no-store",
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || res.statusText);
+  if (!res.ok && !acceptErrorStatus) {
+    const message = (await res.text()).trim();
+    throw new Error(message || `${res.status} ${res.statusText}`);
   }
   return res.json() as Promise<T>;
 }
 
 export const api = {
-  health: () => request<{ ok: boolean }>("/api/health"),
+  health: () => request<Health>("/api/health"),
+  ready: () =>
+    request<{ ready: boolean; reasons: string[]; time: string }>("/api/ready", undefined, true),
+  version: () => request<Record<string, unknown>>("/api/version"),
+  terms: () => request<Terms>("/api/terms"),
+  me: () => request<SessionInfo>("/api/v1/auth/me"),
+  login: (body: { tenant: string; username: string; password: string }) =>
+    request<{ authenticated: boolean; principal: Principal }>("/api/v1/auth/login", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  logout: () => request<{ authenticated: boolean }>("/api/v1/auth/logout", { method: "POST" }),
   stats: () => request<DashboardStats>("/api/stats"),
-  nodes: (params: Record<string, string | number | boolean | undefined> = {}) => {
-    const q = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => {
-      if (v === undefined || v === "" || v === false) return;
-      q.set(k, String(v));
-    });
-    return request<{ total: number; nodes: NodeItem[] }>(`/api/nodes?${q}`);
-  },
-  node: (id: string) => request<NodeItem>(`/api/nodes/${id}`),
-  jobs: () => request<Job[]>("/api/jobs"),
-  job: (id: string) => request<Job>(`/api/jobs/${id}`),
+  trends: (days = 30) => request<DailyMetric[]>(`/api/stats/trends?days=${days}`),
+  nodes: (values: Record<string, string | number | boolean | undefined> = {}) =>
+    request<{
+      total: number;
+      count: number;
+      nodes: NodeItem[];
+      next_cursor: string;
+      has_more: boolean;
+    }>(`/api/nodes${params(values)}`),
+  node: (id: string) => request<NodeItem>(`/api/nodes/${encodeURIComponent(id)}`),
+  nodeMetrics: (id: string, days = 30) =>
+    request<DailyMetric[]>(`/api/nodes/${encodeURIComponent(id)}/metrics?days=${days}`),
+  jobs: (values: Record<string, string | number | boolean | undefined> = {}) =>
+    request<{ jobs: Job[]; next_cursor: string; has_more: boolean }>(
+      `/api/jobs${params(values)}`,
+    ),
+  job: (id: string) => request<Job>(`/api/jobs/${encodeURIComponent(id)}`),
+  jobEvents: (id: string, after = 0) =>
+    request<JobEvent[]>(`/api/jobs/${encodeURIComponent(id)}/events?after=${after}`),
   startFetch: (opts: Record<string, unknown> = {}) =>
     request<Job>("/api/jobs/fetch", { method: "POST", body: JSON.stringify(opts) }),
   startQuality: (opts: Record<string, unknown> = {}) =>
@@ -136,37 +346,91 @@ export const api = {
     request<Job>("/api/jobs/full", { method: "POST", body: JSON.stringify(opts) }),
   startGeo: (opts: Record<string, unknown> = {}) =>
     request<Job>("/api/jobs/geo", { method: "POST", body: JSON.stringify(opts) }),
-  sources: () => request<Source[]>("/api/sources"),
-  countries: (params: Record<string, string | number | boolean | undefined> = {}) => {
-    const q = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => {
-      if (v === undefined || v === "" || v === false) return;
-      q.set(k, String(v));
-    });
-    return request<{
-      total_countries: number;
-      total_nodes: number;
-      countries: CountryRow[];
-    }>(`/api/countries?${q}`);
-  },
+  cancelTask: (id: string) =>
+    request<{ id: string; canceled: boolean }>(`/api/admin/tasks/${encodeURIComponent(id)}/cancel`, {
+      method: "POST",
+    }),
+  tasks: (status = "") =>
+    request<QueuedTask[]>(`/api/admin/tasks${params({ limit: 200, status })}`),
+  queue: () =>
+    request<{ enabled: boolean; workers?: number; tasks?: Record<string, number> }>(
+      "/api/admin/queue",
+    ),
+  sources: (sort = "priority") =>
+    request<Source[]>(`/api/sources${params({ sort })}`),
+  setSourceEnabled: (name: string, enabled: boolean) =>
+    request<{ name: string; enabled: boolean }>(
+      `/api/admin/sources/${encodeURIComponent(name)}/${enabled ? "enable" : "disable"}`,
+      { method: "POST" },
+    ),
+  probeSource: (name: string) =>
+    request<{ state: Source }>(`/api/admin/sources/${encodeURIComponent(name)}/probe`, {
+      method: "POST",
+    }),
+  countries: (values: Record<string, string | number | boolean | undefined> = {}) =>
+    request<{ total_countries: number; total_nodes: number; countries: CountryRow[] }>(
+      `/api/countries${params(values)}`,
+    ),
   aiTargets: () => request<AITarget[]>("/api/ai/targets"),
   hostAI: () => request<Record<string, AIProbeResult>>("/api/ai/host"),
   config: () => request<Record<string, unknown>>("/api/config"),
+  updateConfig: (patch: Record<string, unknown>) =>
+    request<{ version: ConfigVersion; config: Record<string, unknown> }>("/api/admin/config", {
+      method: "PATCH",
+      body: JSON.stringify({ ...patch, confirm: true }),
+    }),
+  configVersions: () => request<ConfigVersion[]>("/api/admin/config/versions?limit=50"),
   schedule: () => request<Record<string, unknown>>("/api/schedule"),
+  pools: () => request<Pool[]>("/api/pools"),
+  tokens: () => request<TokenRecord[]>("/api/admin/tokens"),
+  createToken: (body: Record<string, unknown>) =>
+    request<TokenRecord>("/api/admin/tokens", { method: "POST", body: JSON.stringify(body) }),
+  setTokenEnabled: (id: string, enabled: boolean) =>
+    request<{ id: string; enabled: boolean }>(
+      `/api/admin/tokens/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`,
+      { method: "POST" },
+    ),
+  deleteToken: (id: string) =>
+    request<{ deleted: string }>(`/api/admin/tokens/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  users: () => request<UserRecord[]>("/api/admin/users"),
+  createUser: (body: Record<string, unknown>) =>
+    request<UserRecord>("/api/admin/users", { method: "POST", body: JSON.stringify(body) }),
+  setUserEnabled: (id: string, enabled: boolean) =>
+    request<{ id: string; enabled: boolean }>(
+      `/api/admin/users/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`,
+      { method: "POST" },
+    ),
+  audit: (values: Record<string, string | number | undefined> = {}) =>
+    request<AuditEntry[]>(`/api/admin/audit${params({ limit: 200, ...values })}`),
+  alerts: (active = true) =>
+    request<AlertRecord[]>(`/api/admin/alerts${params({ active, limit: 200 })}`),
+  changeAlert: (id: string, action: "acknowledge" | "resolve") =>
+    request<Record<string, unknown>>(
+      `/api/admin/alerts/${encodeURIComponent(id)}/${action}`,
+      { method: "POST" },
+    ),
 };
 
-export function exportRawUrl(params: Record<string, string> = {}) {
-  const q = new URLSearchParams({ hq: "1", alive: "1", limit: "500", ...params });
-  return `/api/export/raw?${q}`;
+export function setAdminToken(token: string) {
+  window.sessionStorage.setItem("nodeharvest-admin-token", token.trim());
 }
 
-export function exportBase64Url(params: Record<string, string> = {}) {
-  const q = new URLSearchParams({ hq: "1", alive: "1", limit: "500", ...params });
-  return `/api/export/base64?${q}`;
+export function getAdminToken() {
+  return typeof window === "undefined"
+    ? ""
+    : window.sessionStorage.getItem("nodeharvest-admin-token") || "";
 }
 
-export function subUrl(kind: "raw" | "base64" | "clash", params: Record<string, string> = {}) {
-  const q = new URLSearchParams(params);
-  const qs = q.toString();
-  return `/sub/${kind}${qs ? `?${qs}` : ""}`;
+export function exportRawUrl(values: Record<string, string> = {}) {
+  return `/api/export/raw${params({ hq: 1, alive: 1, limit: 500, ...values })}`;
+}
+
+export function exportBase64Url(values: Record<string, string> = {}) {
+  return `/api/export/base64${params({ hq: 1, alive: 1, limit: 500, ...values })}`;
+}
+
+export function subUrl(kind: "raw" | "base64" | "clash", values: Record<string, string> = {}) {
+  return `/sub/${kind}${params(values)}`;
 }

@@ -1,5 +1,5 @@
 #!/bin/sh
-# 停止 node-hunter 后端 / 前端
+# 停止 NodeHarvest 后端 / 前端
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 LOG_DIR="${LOG_DIR:-$ROOT/logs}"
@@ -25,10 +25,9 @@ if [ -f "$LOG_DIR/web.pid" ]; then
 fi
 
 # 只杀本项目，不碰占用 3000 的其它服务
-pkill -f 'node-hunter-server' 2>/dev/null || true
-pkill -f 'next dev.*node-hunter|/web/node_modules/next|next dev -H' 2>/dev/null || true
+pkill -f 'nodeharvest-server' 2>/dev/null || true
+pkill -f 'next dev.*nodeharvest|/web/node_modules/next|next dev -H' 2>/dev/null || true
 # 更精确：cwd 在本项目下的 next
 pkill -f "${ROOT}/web" 2>/dev/null || true
 
-echo "node-hunter stopped (API :${API_PORT} + Next.js)"
-
+echo "NodeHarvest stopped (API :${API_PORT} + Next.js)"

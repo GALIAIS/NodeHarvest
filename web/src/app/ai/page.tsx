@@ -10,6 +10,7 @@ import {
   type NodeItem,
 } from "@/lib/api";
 import { JobActions } from "@/components/job-actions";
+import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatMs } from "@/lib/utils";
@@ -40,30 +41,30 @@ export default function AIPage() {
   }, []);
 
   useEffect(() => {
-    load();
+    const initial = setTimeout(load, 0);
     const t = setInterval(load, 5000);
-    return () => clearInterval(t);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(t);
+    };
   }, [load]);
 
   return (
     <div className="flex flex-1 flex-col">
-      <header className="border-b border-slate-800/80 px-8 py-5">
-        <h1 className="font-[family-name:var(--font-display)] text-xl font-semibold">
-          AI 站点可达
-        </h1>
-        <p className="mt-1 text-sm text-slate-500">
-          ChatGPT / Gemini / Claude / Grok 等目标探测
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="AI reachability matrix"
+        title="AI 站点可达"
+        description="ChatGPT、Gemini、Claude、Grok 等目标的本机边缘状态与节点代理可达矩阵。"
+      />
 
-      <div className="space-y-6 p-8">
+      <div className="reveal space-y-6 p-4 sm:p-6 lg:p-8">
         <Card className="border-amber-500/20 bg-amber-500/5">
           <CardContent className="flex gap-3 p-4 text-sm text-amber-100/90">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
             <div className="space-y-1">
               <p>
                 <strong>真实代理测 AI</strong>：把节点导入 xray/sing-box 本地 SOCKS5，然后设置环境变量{" "}
-                <code className="rounded bg-slate-950 px-1">NODE_HUNTER_SOCKS5=127.0.0.1:1080</code>{" "}
+                <code className="rounded bg-slate-950 px-1">NODE_HARVEST_SOCKS5=127.0.0.1:1080</code>{" "}
                 或在任务 body 传 <code className="rounded bg-slate-950 px-1">socks5</code>。
               </p>
               <p className="text-amber-200/70">

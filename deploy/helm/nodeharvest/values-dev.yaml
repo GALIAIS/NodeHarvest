@@ -1,0 +1,13 @@
+replicaCount: 1
+worker:
+  replicas: 1
+  concurrency: 1
+autoscaling:
+  enabled: false
+podDisruptionBudget:
+  enabled: false
+networkPolicy:
+  enabled: false
+ingress:
+  tls:
+    enabled: false

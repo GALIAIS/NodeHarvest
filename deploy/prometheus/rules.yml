@@ -1,0 +1,65 @@
+groups:
+  - name: nodeharvest
+    rules:
+      - alert: NodeHarvestSubscriptionErrors
+        expr: |
+          sum(rate(nh_sub_requests_total{code=~"5.."}[5m]))
+          / clamp_min(sum(rate(nh_sub_requests_total[5m])), 1) > 0.01
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Subscription 5xx ratio exceeds 1%
+      - alert: NodeHarvestSubscriptionP95Latency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(nh_sub_latency_seconds_bucket[5m]))) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Subscription p95 latency exceeds 200 ms
+      - alert: NodeHarvestConsecutiveJobFailures
+        expr: nh_alerts_active{severity="critical"} > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: A critical nodeharvest anomaly is active
+      - alert: NodeHarvestHQNodesLow
+        expr: nh_nodes_hq < 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Fewer than ten high-quality nodes remain
+      - alert: NodeHarvestDeadLetterQueue
+        expr: nh_queue_tasks{status="dead"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Durable jobs entered the dead-letter state
+      - alert: NodeHarvestDiskPressure
+        expr: |
+          1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"}
+          / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"} > 0.85
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Node filesystem usage exceeds 85%
+      - alert: NodeHarvestEndpointDown
+        expr: probe_success{job="blackbox"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: nodeharvest readiness endpoint is unavailable
+      - alert: NodeHarvestCertificateExpiresSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 7 * 24 * 3600
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: TLS certificate expires in less than seven days

@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nodeharvest.fullname" . }}
+  labels:
+    {{- include "nodeharvest.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels:
+      {{- include "nodeharvest.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ .Values.config.inline | sha256sum }}
+        {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{- end }}
+      labels:
+        {{- include "nodeharvest.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+        {{- with .Values.podLabels }}{{ toYaml . | nindent 8 }}{{- end }}
+    spec:
+      serviceAccountName: {{ include "nodeharvest.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["-addr", ":8080", "-config", "/app/configs/config.yaml", "-data", "/app/data", "-web", "/app/web/dist"]
+          ports:
+            - {name: http, containerPort: 8080, protocol: TCP}
+          env:
+            - {name: NODE_HARVEST_EMBEDDED_WORKERS, value: "0"}
+            - {name: NODE_HARVEST_PUBLIC_URL, value: "https://{{ .Values.hosts.public }}"}
+            - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: {{ .Values.otelEndpoint | quote }}}
+            {{- if .Values.objectStore.endpoint }}
+            - {name: NODE_HARVEST_OBJECT_STORE_ENDPOINT, value: {{ .Values.objectStore.endpoint | quote }}}
+            - {name: NODE_HARVEST_OBJECT_STORE_BUCKET, value: {{ .Values.objectStore.bucket | quote }}}
+            - {name: NODE_HARVEST_OBJECT_STORE_AUTO_CREATE, value: {{ .Values.objectStore.autoCreateBucket | quote }}}
+            {{- end }}
+            {{- include "nodeharvest.secretEnv" . | nindent 12 }}
+          readinessProbe:
+            httpGet: {path: /api/ready, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /api/health, port: http}
+            periodSeconds: 20
+          startupProbe:
+            httpGet: {path: /api/health, port: http}
+            failureThreshold: 30
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /app/data}
+            - {name: output, mountPath: /app/output}
+            - {name: tmp, mountPath: /tmp}
+            {{- if or .Values.config.existingConfigMap .Values.config.inline }}
+            - {name: config, mountPath: /app/configs/config.yaml, subPath: config.yaml, readOnly: true}
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim: {claimName: {{ include "nodeharvest.fullname" . }}-data}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - {name: output, emptyDir: {}}
+        - {name: tmp, emptyDir: {medium: Memory, sizeLimit: 128Mi}}
+        {{- if or .Values.config.existingConfigMap .Values.config.inline }}
+        - name: config
+          configMap: {name: {{ include "nodeharvest.configMapName" . }}}
+        {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

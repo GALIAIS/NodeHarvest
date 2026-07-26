@@ -1,0 +1,10 @@
+title = "NodeHarvest secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated frontend dependencies and build outputs"
+paths = [
+  '''(^|/)web/(\.next|node_modules|out)(/|$)''',
+]

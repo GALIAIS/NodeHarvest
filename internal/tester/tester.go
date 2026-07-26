@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/local/node-hunter/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
 )
 
 // Options 测活选项
@@ -90,16 +90,15 @@ func (t *Tester) testOne(ctx context.Context, n *model.Node) {
 	}
 	defer conn.Close()
 
-	// 可选 TLS 握手（不验证证书，只验证能否完成握手）
+	// 可选 TLS 握手，同时验证证书链与节点声明的服务名。
 	if t.opts.PreferTLSDial && n.TLS {
 		serverName := n.SNI
 		if serverName == "" {
 			serverName = n.Server
 		}
 		tlsConn := tls.Client(conn, &tls.Config{
-			InsecureSkipVerify: true,
-			ServerName:         serverName,
-			MinVersion:         tls.VersionTLS12,
+			ServerName: serverName,
+			MinVersion: tls.VersionTLS12,
 		})
 		_ = tlsConn.SetDeadline(time.Now().Add(t.opts.Timeout))
 		if err := tlsConn.HandshakeContext(cctx); err != nil {

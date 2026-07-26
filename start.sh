@@ -1,5 +1,5 @@
 #!/bin/sh
-# Node Hunter 一键启动：后端 :8080 + Next.js :3000
+# NodeHarvest 一键启动：后端 :8080 + Next.js :3000
 # 适配 Alpine/Linux/Minis (aarch64)
 set -eu
 
@@ -33,8 +33,8 @@ export GO111MODULE=on
 
 echo "==> 构建后端 (linux/$(go env GOARCH))..."
 go mod tidy
-go build -o bin/node-hunter-server ./cmd/server
-go build -o bin/node-hunter ./cmd/node-hunter
+go build -o bin/nodeharvest-server ./cmd/server
+go build -o bin/nodeharvest ./cmd/nodeharvest
 
 port_in_use() {
   port="$1"
@@ -54,7 +54,7 @@ port_in_use() {
 free_port() {
   port="$1"
   # 仅杀本项目相关进程，避免误杀 Sub-Store 等占用 3000 的服务
-  pkill -f "node-hunter-server.*:${port}" 2>/dev/null || true
+  pkill -f "nodeharvest-server.*:${port}" 2>/dev/null || true
   pkill -f "next dev.*-p ${port}" 2>/dev/null || true
   if [ -f "$LOG_DIR/server.pid" ] && [ "$port" = "${API_ADDR##*:}" ]; then
     old="$(cat "$LOG_DIR/server.pid" 2>/dev/null || true)"
@@ -95,7 +95,7 @@ fi
 
 echo "==> 启动 API: http://${API_ADDR}"
 # 后台启动时必须重定向，避免 shell 退出后 SIGPIPE
-nohup ./bin/node-hunter-server \
+nohup ./bin/nodeharvest-server \
   -addr "$API_ADDR" \
   -config "$CONFIG" \
   -data "$DATA_DIR" \

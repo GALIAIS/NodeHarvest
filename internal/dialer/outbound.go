@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/local/node-hunter/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
 )
 
 // BuildOutbound 将 Node 转为 sing-box outbound 对象（map，便于 JSON）
@@ -49,8 +49,10 @@ func BuildOutbound(n *model.Node) (map[string]any, error) {
 		}
 		tls := map[string]any{
 			"enabled":     true,
-			"insecure":    true,
 			"server_name": firstNonEmpty(n.SNI, n.Host, n.Server),
+		}
+		if n.SkipTLSVerify() {
+			tls["insecure"] = true
 		}
 		if n.ALPN != "" {
 			tls["alpn"] = splitCSV(n.ALPN)
@@ -86,8 +88,10 @@ func BuildOutbound(n *model.Node) (map[string]any, error) {
 		if n.TLS || n.Security == "tls" {
 			tls := map[string]any{
 				"enabled":     true,
-				"insecure":    true,
 				"server_name": firstNonEmpty(n.SNI, n.Host, n.Server),
+			}
+			if n.SkipTLSVerify() {
+				tls["insecure"] = true
 			}
 			if fp := extra["fp"]; fp != "" {
 				tls["utls"] = map[string]any{"enabled": true, "fingerprint": fp}
@@ -117,8 +121,10 @@ func BuildOutbound(n *model.Node) (map[string]any, error) {
 		if n.TLS || sec == "tls" || sec == "reality" {
 			tls := map[string]any{
 				"enabled":     true,
-				"insecure":    true,
 				"server_name": firstNonEmpty(n.SNI, n.Host, n.Server),
+			}
+			if n.SkipTLSVerify() {
+				tls["insecure"] = true
 			}
 			if fp := extra["fp"]; fp != "" {
 				tls["utls"] = map[string]any{"enabled": true, "fingerprint": fp}
@@ -155,8 +161,10 @@ func BuildOutbound(n *model.Node) (map[string]any, error) {
 		}
 		tls := map[string]any{
 			"enabled":     true,
-			"insecure":    true,
 			"server_name": firstNonEmpty(n.SNI, n.Host, n.Server),
+		}
+		if n.SkipTLSVerify() {
+			tls["insecure"] = true
 		}
 		o["tls"] = tls
 		return o, nil

@@ -1,17 +1,24 @@
-# 订阅源目录（2026-07-25 扩充）
+# 订阅源目录（2026-07-26 扩充）
 
 > 公开免费节点源变动极快，本表仅作参考。以 `config.yaml` 中 `enabled` 为准。  
-> 本次实测：`curl` HEAD/GET 200 + 内容为 URI / Base64 / Clash proxies 才入库。
+> 本次实测：`curl` HEAD/Range GET 返回 2xx + 内容为 URI / Base64 / Clash proxies 才入库。
 
 ## 规模
 
 | 项 | 数量 |
 |----|------|
-| 总源 | **115** |
-| 启用 | **113** |
+| 总源 | **131** |
+| 启用 | **129** |
 | 关闭（重复镜像） | 2（`freefq-ghproxy`、`mahdibland-cdn`） |
 
-## 新增批次（+66）
+## 新增批次（+82）
+
+### MatinGhanbari + liMilCo（本轮 +16）
+
+- MatinGhanbari：`super-sub`、`all_sub`，以及 VMess / VLESS / Trojan / SS / Hysteria2 分协议源；上游声明每 15 分钟更新。
+- liMilCo：`best`、`new_configs`、`all_configs`，以及 VMess / VLESS / Trojan / SS / SSR / Hysteria2 分协议源。
+- 16 个 URL 均以 Range GET 在线校验为 HTTP 206 后启用；精选源优先级 95–100，全集 75–90，分协议 70–80。
+- 每个新增源设置独立 `max_bytes`，防止超大或异常响应挤占内存。
 
 ### itsyebekhe/PSG（TG 频道高频采集）
 
@@ -68,7 +75,7 @@ free18 / ermaozi / ripao / mfuu / chengaopan 的 clash/yml 输出。
 
 ## 维护建议
 
-1. 跑：`./bin/node-hunter -skip-test` 或 Web「仅采集」，看日志 `fetch failed`
+1. 跑：`./bin/nodeharvest -skip-test` 或 Web「仅采集」，看日志 `fetch failed`
 2. 失败源设 `enabled: false`
 3. 手机/沙箱带宽有限时优先关：`ndsphonemy-all`、`leon406-vless`、`psg-xray-cdn`、`mheidari98`/`ms-*`
 4. 去重靠 cleaner（fingerprint），多源重叠是预期行为

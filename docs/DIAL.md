@@ -13,18 +13,22 @@
 
 ```bash
 # VPS
-bash /opt/node-hunter/deploy/install-singbox.sh
-# 或手动放到 /opt/node-hunter/bin/sing-box
-export NODE_HUNTER_SINGBOX=/opt/node-hunter/bin/sing-box
-systemctl restart node-hunter
+bash /opt/nodeharvest/deploy/install-singbox.sh
+# 或手动放到 /opt/nodeharvest/bin/sing-box
+export NODE_HARVEST_SINGBOX=/opt/nodeharvest/bin/sing-box
+systemctl restart nodeharvest
 ```
+
+安装脚本默认固定 sing-box 1.13.12 并校验官方归档 SHA-256；指定其他版本时必须
+同时提供 `SINGBOX_SHA256`。生产镜像使用固定上游 commit、当前 Go 安全补丁和
+已修复依赖静态构建，不依赖 glibc。
 
 ## 配置 `configs/config.yaml`
 
 ```yaml
 dial:
   enabled: true
-  bin: "/opt/node-hunter/bin/sing-box"
+  bin: "/opt/nodeharvest/bin/sing-box"
   engine: sing-box
   concurrency: 4
   timeout_sec: 18

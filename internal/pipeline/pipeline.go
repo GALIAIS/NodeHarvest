@@ -6,14 +6,14 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/local/node-hunter/internal/cleaner"
-	"github.com/local/node-hunter/internal/config"
-	"github.com/local/node-hunter/internal/exporter"
-	"github.com/local/node-hunter/internal/fetcher"
-	"github.com/local/node-hunter/internal/filter"
-	"github.com/local/node-hunter/internal/model"
-	"github.com/local/node-hunter/internal/parser"
-	"github.com/local/node-hunter/internal/tester"
+	"github.com/GALIAIS/NodeHarvest/internal/cleaner"
+	"github.com/GALIAIS/NodeHarvest/internal/config"
+	"github.com/GALIAIS/NodeHarvest/internal/exporter"
+	"github.com/GALIAIS/NodeHarvest/internal/fetcher"
+	"github.com/GALIAIS/NodeHarvest/internal/filter"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/parser"
+	"github.com/GALIAIS/NodeHarvest/internal/tester"
 )
 
 // Run 执行完整流水线：拉取 → 解析 → 清理 → 测活 → 筛选 → 导出
@@ -27,6 +27,9 @@ func Run(ctx context.Context, cfg *config.Config) (*model.Result, error) {
 	slog.Info("start fetch", "sources", len(sources))
 	f := fetcher.New(cfg.FetchTimeout(), cfg.App.UserAgent)
 	docs := f.FetchAll(ctx, sources, min(16, len(sources)))
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	okSources := 0
 	var all []*model.Node
@@ -120,6 +123,9 @@ func RunFetchOnly(ctx context.Context, cfg *config.Config) (*model.Result, error
 	slog.Info("start fetch (skip-test)", "sources", len(sources))
 	f := fetcher.New(cfg.FetchTimeout(), cfg.App.UserAgent)
 	docs := f.FetchAll(ctx, sources, min(16, len(sources)))
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	okSources := 0
 	var all []*model.Node

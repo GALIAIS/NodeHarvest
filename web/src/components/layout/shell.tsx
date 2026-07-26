@@ -2,7 +2,7 @@ import { Sidebar } from "./sidebar";
 
 export function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="relative flex min-h-screen bg-[#070b14] text-slate-100">
+    <div className="telemetry-grid relative flex min-h-screen flex-col bg-[#070b14] text-slate-100 md:flex-row">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(34,211,238,0.08),_transparent_50%),radial-gradient(ellipse_at_bottom_right,_rgba(251,191,36,0.06),_transparent_45%)]" />
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.035]"

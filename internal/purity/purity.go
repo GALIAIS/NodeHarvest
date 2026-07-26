@@ -21,8 +21,8 @@ import (
 
 	"golang.org/x/net/proxy"
 
-	"github.com/local/node-hunter/internal/dialer"
-	"github.com/local/node-hunter/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/dialer"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
 )
 
 // Options 探测选项
@@ -55,12 +55,12 @@ func New(opts Options) (*Prober, error) {
 		opts.Timeout = 25 * time.Second
 	}
 	if opts.WorkDir == "" {
-		opts.WorkDir = filepath.Join(os.TempDir(), "node-hunter-purity")
+		opts.WorkDir = filepath.Join(os.TempDir(), "nodeharvest-purity")
 	}
 	if opts.BasePort <= 0 {
 		opts.BasePort = 21000
 	}
-	_ = os.MkdirAll(opts.WorkDir, 0o755)
+	_ = os.MkdirAll(opts.WorkDir, 0o700)
 	bin, engine, err := dialer.Available()
 	if opts.Bin != "" {
 		if _, e := os.Stat(opts.Bin); e == nil {
@@ -164,6 +164,7 @@ func (p *Prober) testOne(ctx context.Context, n *model.Node) {
 
 	cctx, cancel := context.WithTimeout(ctx, p.opts.Timeout)
 	defer cancel()
+	// #nosec G204 -- the discovered proxy executable and generated config path are not request-controlled.
 	cmd := exec.CommandContext(cctx, p.bin, "run", "-c", cfgPath)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard

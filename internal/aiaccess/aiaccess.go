@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/local/node-hunter/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
 	"golang.org/x/net/proxy"
 )
 
@@ -223,7 +223,7 @@ func (p *Prober) probeNodeTCP(ctx context.Context, n *model.Node, t model.AITarg
 func (p *Prober) httpClient(transport http.RoundTripper) *http.Client {
 	if transport == nil {
 		transport = &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
 			MaxIdleConns:        32,
 			IdleConnTimeout:     30 * time.Second,
 			TLSHandshakeTimeout: p.opts.Timeout,
@@ -251,7 +251,7 @@ func (p *Prober) socksHTTPClient(addr string) (*http.Client, error) {
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			return dialer.Dial(network, address)
 		},
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12},
 		DisableKeepAlives: true,
 	}
 	return p.httpClient(tr), nil

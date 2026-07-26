@@ -1,21 +1,22 @@
 package publish
 
 import (
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
-	"github.com/local/node-hunter/internal/exporter"
-	"github.com/local/node-hunter/internal/model"
-	"github.com/local/node-hunter/internal/timex"
+	"github.com/GALIAIS/NodeHarvest/internal/exporter"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/timex"
 )
 
 // Blob 预渲染订阅产物
@@ -36,33 +37,60 @@ type Blob struct {
 // Cache 原子指针缓存 + 磁盘落盘
 type Cache struct {
 	dir string
-	ptr unsafe.Pointer // *Blob
+	ptr atomic.Pointer[Blob]
 	mu  sync.Mutex
-	gen atomic.Uint64
 }
 
 func NewCache(dir string) *Cache {
 	if dir == "" {
 		dir = "output"
 	}
-	_ = os.MkdirAll(dir, 0o755)
+	_ = os.MkdirAll(dir, 0o700)
+	// #nosec G302 -- dir is a directory and 0700 is the restrictive directory mode.
+	_ = os.Chmod(dir, 0o700)
 	c := &Cache{dir: dir}
 	if b := c.loadFromDisk(); b != nil {
-		atomic.StorePointer(&c.ptr, unsafe.Pointer(b))
+		c.ptr.Store(b)
 	}
 	return c
 }
 
 func (c *Cache) Get() *Blob {
-	p := atomic.LoadPointer(&c.ptr)
-	if p == nil {
+	return c.ptr.Load()
+}
+
+func (c *Cache) Store(blob *Blob, persist bool) error {
+	if c == nil || blob == nil {
 		return nil
 	}
-	return (*Blob)(p)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if blob.ByCountry == nil {
+		blob.ByCountry = map[string]int{}
+	}
+	if blob.CountryRaw == nil {
+		blob.CountryRaw = map[string]string{}
+	}
+	if blob.CountryBase64 == nil {
+		blob.CountryBase64 = map[string]string{}
+	}
+	if blob.CountryClash == nil {
+		blob.CountryClash = map[string]string{}
+	}
+	if blob.CountryCount == nil {
+		blob.CountryCount = map[string]int{}
+	}
+	c.ptr.Store(blob)
+	if persist {
+		return c.persist(blob)
+	}
+	return nil
 }
 
 // Update 从高质量节点重建全局与分国家缓存
 func (c *Cache) Update(nodes []*model.Node, maxCountryVariants int) *Blob {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if maxCountryVariants <= 0 {
 		maxCountryVariants = 30
 	}
@@ -90,7 +118,7 @@ func (c *Cache) Update(nodes []*model.Node, maxCountryVariants int) *Blob {
 		Clash:         clash,
 		Count:         len(nodes),
 		ByCountry:     byCountry,
-		ETag:          etagOf(raw + b64),
+		ETag:          etagOf(raw + b64 + clash),
 		UpdatedAt:     timex.NowRFC3339(),
 		CountryRaw:    map[string]string{},
 		CountryBase64: map[string]string{},
@@ -127,8 +155,7 @@ func (c *Cache) Update(nodes []*model.Node, maxCountryVariants int) *Blob {
 		blob.CountryCount[it.k] = len(ns)
 	}
 
-	atomic.StorePointer(&c.ptr, unsafe.Pointer(blob))
-	c.gen.Add(1)
+	c.ptr.Store(blob)
 	if err := c.persist(blob); err != nil {
 		slog.Warn("publish cache persist", "err", err)
 	} else {
@@ -138,29 +165,44 @@ func (c *Cache) Update(nodes []*model.Node, maxCountryVariants int) *Blob {
 }
 
 func (c *Cache) persist(b *Blob) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	_ = os.MkdirAll(c.dir, 0o755)
-	writes := map[string]string{
-		"sub.txt":    b.Raw,
-		"sub.base64": b.Base64,
-		"clash.yaml": b.Clash,
-		"sub.meta.json": fmt.Sprintf(
+	_ = os.MkdirAll(c.dir, 0o700)
+	// #nosec G302 -- c.dir is a directory and 0700 is the restrictive directory mode.
+	_ = os.Chmod(c.dir, 0o700)
+	writes := []struct {
+		name string
+		body string
+	}{
+		{name: "sub.txt", body: b.Raw},
+		{name: "sub.base64", body: b.Base64},
+		{name: "clash.yaml", body: b.Clash},
+		{name: "sub.meta.json", body: fmt.Sprintf(
 			`{"count":%d,"etag":%q,"updated_at":%q}`,
 			b.Count, b.ETag, b.UpdatedAt,
-		),
+		)},
 	}
-	for name, body := range writes {
-		path := filepath.Join(c.dir, name)
+	for _, write := range writes {
+		path := filepath.Join(c.dir, write.name)
 		tmp := path + ".tmp"
-		if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
+		if err := os.WriteFile(tmp, []byte(write.body), 0o600); err != nil {
 			return err
 		}
-		if err := os.Rename(tmp, path); err != nil {
+		if err := replaceFile(tmp, path); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func replaceFile(tmp, path string) error {
+	if err := os.Rename(tmp, path); err == nil {
+		return nil
+	} else if runtime.GOOS != "windows" {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (c *Cache) loadFromDisk() *Blob {
@@ -171,11 +213,19 @@ func (c *Cache) loadFromDisk() *Blob {
 		return nil
 	}
 	b := &Blob{
-		Raw:       string(raw),
-		Base64:    string(b64),
-		Clash:     string(clash),
-		UpdatedAt: timex.NowRFC3339(),
-		ByCountry: map[string]int{},
+		Raw: string(raw), Base64: string(b64), Clash: string(clash), ByCountry: map[string]int{},
+	}
+	var meta struct {
+		Count     int    `json:"count"`
+		ETag      string `json:"etag"`
+		UpdatedAt string `json:"updated_at"`
+	}
+	if data, err := os.ReadFile(filepath.Join(c.dir, "sub.meta.json")); err == nil {
+		if json.Unmarshal(data, &meta) == nil {
+			b.Count = meta.Count
+			b.ETag = meta.ETag
+			b.UpdatedAt = meta.UpdatedAt
+		}
 	}
 	if b.Raw != "" {
 		n := 0
@@ -186,12 +236,17 @@ func (c *Cache) loadFromDisk() *Blob {
 		}
 		b.Count = n
 	}
-	b.ETag = etagOf(b.Raw + b.Base64)
+	b.ETag = etagOf(b.Raw + b.Base64 + b.Clash)
+	if b.UpdatedAt == "" {
+		if info, err := os.Stat(filepath.Join(c.dir, "sub.txt")); err == nil {
+			b.UpdatedAt = timex.FormatRFC3339(info.ModTime())
+		}
+	}
 	return b
 }
 
 func etagOf(s string) string {
-	h := sha1.Sum([]byte(s))
+	h := sha256.Sum256([]byte(s))
 	return `"` + hex.EncodeToString(h[:8]) + `"`
 }
 
@@ -225,6 +280,15 @@ func (b *Blob) Format(format, country string) (body string, count int, ok bool) 
 	default:
 		return "", 0, false
 	}
+}
+
+func (b *Blob) Fresh(maxAge time.Duration) bool {
+	if b == nil || b.UpdatedAt == "" || maxAge <= 0 {
+		return false
+	}
+	updated, err := time.Parse(time.RFC3339, b.UpdatedAt)
+	age := time.Since(updated)
+	return err == nil && age >= -5*time.Minute && age <= maxAge
 }
 
 func normalizeCC(c string) string {

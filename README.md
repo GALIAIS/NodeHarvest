@@ -1,240 +1,168 @@
-# node-hunter
+# NodeHarvest
 
-代理节点 **采集 → 智能测速 → AI 可达筛选 → 导出** 一体化工具。
+面向生产的代理节点采集、真实拨测、质量治理与订阅分发平台。
 
-- **后端**：Go API（异步任务、多轮质量评分、AI 站点探测）
-- **前端**：Next.js + Tailwind CSS + shadcn 风格组件
+> 仅在合法且已获授权的场景使用。采集端点来自独立第三方，不提供可用性、安全性或合法性保证。
 
-> 仅供学习与网络研究。请遵守当地法律法规与目标站点服务条款。
+## 已实现能力
 
-## 功能
+- 131 个完整采集源目录，支持 URI、Base64、Clash YAML，带优先级、大小上限、健康分、自动冷却和单源探测。
+- vmess、vless、trojan、ss、ssr、hysteria2、tuic 解析、去重、来源追踪和可选端口折叠。
+- TCP/TLS 多轮质量测试，以及 sing-box / xray 独立进程真实代理 HTTP 下载测试。
+- 可解释评分 v2：延迟、成功率、7 日稳定性、TLS、HTTP、吞吐量。
+- SQLite 零服务运行；生产可切 PostgreSQL、Redis、MinIO/S3。
+- 持久化优先级队列、租约、重试、死信、取消、独立 Worker 和事件时间线。
+- 本地 bcrypt、OIDC、签名会话、viewer/operator/admin RBAC、多租户隔离。
+- bcrypt 订阅 Token、国家/协议 ACL、RPS、日请求配额、流量统计、到期和吊销。
+- global-hq、verified、streaming、AI-friendly、low-latency 及国家分区订阅。
+- Prometheus、OpenTelemetry、Jaeger、结构化 request/job/trace ID、异常生命周期和签名 Webhook。
+- 完整管理控制台：趋势、国家分布、源治理、任务事件、Token、用户、审计、告警、热配置和合规页。
+- CI、SBOM、安全扫描、可复现镜像、Compose、Helm、加密备份、验证恢复、原子发布和回滚。
 
-- 多源订阅拉取（URI / Base64 / Clash YAML）
-- 协议：vmess / vless / trojan / ss / ssr / hysteria2 / tuic
-- 智能质量：多轮 TCP、抖动、成功率、TLS 握手、S/A/B/C/D/F 定级
-- AI 站点探测：ChatGPT / Gemini / Claude / Grok / OpenAI / Copilot / Perplexity
-  - 启发模式（默认）
-  - 真实代理模式（配置本地 SOCKS5）
-- Web 控制台：仪表盘 / 节点库 / 任务 / 源 / AI 矩阵 / 导出
-- 导出：raw / base64 / clash / json + AI 友好列表
-- **定时任务**：可配置间隔自动采集 + 测速 + 清理低质量节点
-- **公开订阅**：`/sub/raw|base64|clash` 供远程客户端拉取（可 Token）
-- **VPS 部署**：Docker Compose / systemd，见 [deploy/DEPLOY.md](deploy/DEPLOY.md)
+完整 API 定义见 [docs/openapi.yaml](docs/openapi.yaml)。
 
 ## 架构
 
-```
-node-hunter/
-  cmd/node-hunter/   # CLI
-  cmd/server/        # HTTP API :8080 + /sub 订阅 + scheduler
-  web/               # Next.js 控制台 :3000
-  configs/           # 订阅源与阈值 / schedule / publish
-  internal/          # 业务逻辑（含 scheduler）
-  data/              # 节点快照 snapshot.json
-  output/            # 导出文件（含 sub.txt / clash.yaml）
-  deploy/            # Docker / systemd / Caddy
-  bin/               # Linux/macOS 构建产物（start.sh 自动生成）
-  start.sh / stop.sh # Linux / Alpine / Minis 一键启停
-  start.ps1          # Windows 一键启动
+```text
+Public /sub ── Caddy/WAF ── API replicas ── Redis cache/lock
+                                  │
+Admin console ── OIDC/RBAC ──────┤
+                                  ├── PostgreSQL
+Scheduler/API ── durable queue ───┤
+                                  ├── Worker replicas ── sing-box/xray
+                                  └── S3/MinIO artifacts
+
+Prometheus ← /metrics       OTLP collector → Jaeger
 ```
 
-## 环境要求
+单机模式保留相同执行路径：SQLite + 进程内缓存 + embedded worker，不要求外部服务。
 
-| 组件 | 版本建议 |
-|------|----------|
-| Go | **1.22+**（Alpine 3.21 自带 1.23.9 可用；`go.mod` 已固定 `go 1.23.0`） |
-| Node.js | 20+ / 22 LTS |
-| npm | 10+ |
-| OS | Linux aarch64/x86_64、macOS、Windows |
+## 环境
 
-Minis / Alpine 安装示例：
+| 组件 | 版本 |
+|---|---|
+| Go | 1.26.5 |
+| Node.js | 24（构建控制台） |
+| Docker | Compose v2（生产栈） |
+| 可选 | PostgreSQL 17、Redis 8、S3/MinIO、sing-box 1.13.12 或 xray |
 
-```bash
-apk add go nodejs npm git curl
-```
+## 本地启动
 
-> 注意：Android 挂载的 `/storage/emulated/0/...`（`/var/minis/mounts/...`）通常 **不支持 flock**，
-> `go mod` / 部分构建会失败。请把项目放到可写可 flock 的路径，例如：
-> `/var/minis/workspace/node-hunter`（本仓库已按此路径验证）。
+Windows：
 
-## 快速开始（Linux / Alpine / Minis）
-
-### 一键启动
-
-```bash
-cd /var/minis/workspace/node-hunter   # 或你的项目路径
-chmod +x start.sh stop.sh run-server.sh
-./start.sh
-```
-
-- 后端：`http://127.0.0.1:8080`
-- 前端：`http://127.0.0.1:3000`
-- 停止：`./stop.sh`
-
-仅 API：
-
-```bash
-./run-server.sh
-# 或
-./bin/node-hunter-server -addr 127.0.0.1:8080 -config configs/config.yaml
-```
-
-### 手动构建
-
-```bash
-export CGO_ENABLED=0
-export GOPROXY=https://proxy.golang.org,direct
-go mod tidy
-go build -o bin/node-hunter-server ./cmd/server
-go build -o bin/node-hunter ./cmd/node-hunter
-
+```powershell
+go run ./cmd/server -addr :8080 -config configs/config.yaml
 cd web
-npm install --no-fund --no-audit
-# 若从 Windows 拷来 node_modules，请先删掉再装：
-# rm -rf node_modules && npm install
-npm run dev -- -H 127.0.0.1 -p 3000
+npm ci
+npm run dev
 ```
 
-浏览器打开：http://127.0.0.1:3000  
-前端通过 rewrite 把 `/api/*` 代理到 `http://127.0.0.1:8080`（可用 `API_ORIGIN` 覆盖）。
-
-### 推荐操作流
-
-1. 仪表盘点 **一键全流程**
-2. 等待任务完成（任务中心看进度）
-3. 节点库筛选「仅高质量」
-4. 导出页下载订阅，或取 `output/nodes-latest.*`
-
-### CLI（可选）
+Linux/macOS：
 
 ```bash
-./bin/node-hunter -skip-test                 # 只采集
-./bin/node-hunter -c 128 -max-nodes 200
+go run ./cmd/server -addr :8080 -config configs/config.yaml
+cd web
+npm ci
+npm run dev
 ```
 
-## Windows
+打开 `http://127.0.0.1:3000`。开发模式通过 `API_ORIGIN` 将 `/api/*`
+转发至 Go 服务；生产镜像使用静态导出并由 Go 服务同源托管。
 
-```powershell
-.\start.ps1
-# 或
-go build -o node-hunter-server.exe ./cmd/server
-.\node-hunter-server.exe -addr :8080 -config configs\config.yaml
-cd web; npm install; npm run dev
-```
-
-## AI 真实代理探测（可选）
-
-1. 用 xray / sing-box 把候选节点挂到本地 SOCKS5（如 `127.0.0.1:1080`）
-2. 启动后端前设置：
+默认配置启用 SQLite 和持久化队列。管理操作可先使用
+`NODE_HARVEST_ADMIN_TOKEN`；生产应配置本地账户或 OIDC：
 
 ```bash
-export NODE_HUNTER_SOCKS5=127.0.0.1:1080
-./bin/node-hunter-server -addr :8080
+export NODE_HARVEST_ADMIN_TOKEN="replace-with-random-secret"
+export NODE_HARVEST_TOKEN="replace-with-subscription-secret"
+export NODE_HARVEST_SESSION_SECRET="at-least-32-random-characters"
+go run ./cmd/server -addr :8080 -config configs/config.yaml
 ```
 
-PowerShell：
-
-```powershell
-$env:NODE_HUNTER_SOCKS5 = "127.0.0.1:1080"
-.\node-hunter-server.exe
-```
-
-或在 `POST /api/jobs/ai` body：`{"socks5":"127.0.0.1:1080"}`
-
-无 SOCKS5 时为启发模式，用于筛候选，不保证经节点可访问 AI。
-
-## 定时任务 + 高质量筛选
-
-`configs/config.yaml`：
-
-```yaml
-schedule:
-  enabled: true
-  interval_min: 180   # 每 3 小时
-  job: full           # full | fetch | quality
-  skip_ai: true
-  max_test: 1200
-  rounds: 2
-
-filter:
-  min_score: 70
-  max_nodes: 500
-  prune_after_quality: true
-  sort_by: score
-```
-
-测速后会按 `prune_after_quality` 清理死亡节点，再按分数/延迟导出高质量池。
-
-## 远程订阅（分发给其他用户）
-
-```yaml
-publish:
-  enabled: true
-  token: "your-secret"     # 或环境变量 NODE_HUNTER_TOKEN
-  path_prefix: "/sub"
-  min_score: 70
-  max_nodes: 500
-  public_url: "https://sub.example.com"
-```
-
-| 客户端 | URL |
-|--------|-----|
-| v2rayN / v2rayNG | `https://你的域名/sub/base64?token=TOKEN` |
-| Clash Meta | `https://你的域名/sub/clash?token=TOKEN` |
-| 原始 URI | `https://你的域名/sub/raw?token=TOKEN` |
-
-也支持 `Authorization: Bearer TOKEN`。任务完成后磁盘固定文件：`output/sub.txt`、`output/sub.base64`、`output/clash.yaml`。
-
-## VPS 一键部署
-
-详见 **[deploy/DEPLOY.md](deploy/DEPLOY.md)**。
+## 构建
 
 ```bash
-export NODE_HUNTER_TOKEN="$(openssl rand -hex 16)"
-export NODE_HUNTER_PUBLIC_URL="https://sub.example.com"
-docker compose -f deploy/docker-compose.yml up -d --build
+go build -trimpath -o dist/nodeharvest-server ./cmd/server
+go build -trimpath -o dist/nodeharvest-worker ./cmd/worker
+go build -trimpath -o dist/nodeharvest-migrate ./cmd/migrate
+go build -trimpath -o dist/nodeharvest ./cmd/nodeharvest
+cd web
+npm ci
+npm run lint
+STATIC_EXPORT=1 npm run build
 ```
 
-## 主要 API
+## 容器镜像
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/stats` | 仪表盘统计 |
-| GET | `/api/nodes` | 节点列表（q/protocol/grade/hq/alive/ai/min_score） |
-| POST | `/api/jobs/full` | 采集+测速+AI（`skip_ai` 可跳过 AI） |
-| POST | `/api/jobs/fetch` | 仅采集 |
-| POST | `/api/jobs/quality` | 智能测速 |
-| POST | `/api/jobs/ai` | AI 探测 |
-| GET | `/api/export/raw` | 导出 URI |
-| GET | `/api/export/base64` | 导出 base64 订阅 |
-| GET | `/api/export/clash` | 导出 Clash YAML |
-| GET | `/api/schedule` | 定时任务状态 |
-| GET | `/sub` | 订阅索引（links） |
-| GET | `/sub/raw` | 公开 URI 订阅 |
-| GET | `/sub/base64` | 公开 base64 订阅 |
-| GET | `/sub/clash` | 公开 Clash 订阅 |
+`main` 分支自动发布 `ghcr.io/galiais/nodeharvest:edge`；`v*` 标签发布同名
+版本镜像并创建 GitHub Release，也可从 Actions 手动指定源码引用和镜像标签。
 
-## 环境变量
+```bash
+docker pull ghcr.io/galiais/nodeharvest:edge
+docker run --rm -p 8080:8080 \
+  -e NODE_HARVEST_TOKEN="replace-with-subscription-secret" \
+  -e NODE_HARVEST_ADMIN_TOKEN="replace-with-admin-secret" \
+  -e NODE_HARVEST_SESSION_SECRET="at-least-32-random-characters" \
+  ghcr.io/galiais/nodeharvest:edge
+```
 
-| 变量 | 说明 |
-|------|------|
-| `API_ORIGIN` | Next.js rewrite 目标，默认 `http://127.0.0.1:8080` |
-| `API_ADDR` | `start.sh` 后端监听，默认 `127.0.0.1:8080` |
-| `WEB_HOST` / `WEB_PORT` | 前端监听，默认 `127.0.0.1` / `3000` |
-| `NODE_HUNTER_SOCKS5` | AI 真实探测 SOCKS5 地址 |
-| `NODE_HUNTER_TOKEN` | 公开订阅 Token |
-| `NODE_HUNTER_PUBLIC_URL` | 对外 URL 前缀（写入 /sub 索引） |
-| `NODE_HUNTER_SCHEDULE` | `1`/`0` 强制开/关定时 |
-| `CGO_ENABLED` | 默认 `0`（静态链接，适合 Alpine musl） |
-| `GOPROXY` | 默认 `https://proxy.golang.org,direct` |
+构建与标签规则见 [容器镜像说明](docs/CONTAINER_IMAGE.md)。
 
-## Minis 注意事项
+## 生产 Compose
 
-1. **工作目录**：优先用 `/var/minis/workspace/node-hunter`，不要在 mount 盘直接 `go mod tidy`。
-2. **前端 native**：Windows 拷来的 `web/node_modules` 只有 `swc-win32-*`，在 aarch64 Alpine 上必须重装以拿到 `swc-linux-arm64-musl`。
-3. **并发测速**：手机/沙箱网络并发过高可能触发限流，可在 `configs/config.yaml` 把 `app.concurrency` 调到 `16~32`。
-4. **后台进程**：`start.sh` 后端用 `nohup` + 日志重定向；App 挂起后长任务可能被系统回收，重要任务请保持前台会话。
+`deploy/compose.prod.yml` 包含 PostgreSQL、Redis、MinIO、API、Worker、Caddy、
+Prometheus、Jaeger、OTel Collector、node-exporter 和 blackbox-exporter。
 
-## License
+```bash
+export POSTGRES_PASSWORD="..."
+export NODE_HARVEST_TOKEN="..."
+export NODE_HARVEST_ADMIN_TOKEN="..."
+export NODE_HARVEST_SESSION_SECRET="..."
+export OBJECT_STORE_ACCESS_KEY="..."
+export OBJECT_STORE_SECRET_KEY="..."
+export NODE_HARVEST_IMAGE="ghcr.io/your-org/nodeharvest:stable"
+export PUBLIC_DOMAIN="node.example.com"
+export ADMIN_DOMAIN="admin.example.com"
+docker compose -f deploy/compose.prod.yml up -d
+```
 
-MIT
+公网域名仅暴露 `/sub*` 和探针；管理域名承载控制台及管理 API。详细步骤见
+[deploy/DEPLOY.md](deploy/DEPLOY.md)。
+
+## 订阅
+
+```text
+GET /sub/raw
+GET /sub/base64
+GET /sub/clash
+GET /sub/pool/{key}/{raw|base64|clash}
+GET /sub/country/{code}/{raw|base64|clash}
+```
+
+默认使用 `Authorization: Bearer TOKEN` 或 `X-Sub-Token: TOKEN`。URL
+`?token=` 默认关闭，避免凭证进入浏览历史、Referer 和代理日志。
+
+## 管理与权限
+
+| 角色 | 能力 |
+|---|---|
+| viewer | 查看租户任务、事件、队列和系统告警 |
+| operator | 启动/取消任务、探测源、刷新发布、处理告警 |
+| admin | 管理 Token、用户及系统热配置 |
+
+管理面可通过 `auth.admin_host` 与 `auth.admin_cidrs` 隔离。默认租户的 admin
+才能修改系统级源和热配置。
+
+## 数据与部署文档
+
+- [运维手册](docs/RUNBOOK.md)
+- [安全基线](docs/SECURITY.md)
+- [部署指南](deploy/DEPLOY.md)
+- [容器镜像](docs/CONTAINER_IMAGE.md)
+- [企业路线图（已完成）](docs/ENTERPRISE_ROADMAP.md)
+- [OpenAPI 3.1](docs/openapi.yaml)
+
+## 许可证
+
+NodeHarvest 采用 [GNU Affero General Public License v3.0 or later](LICENSE)。
+如果修改后通过网络向用户提供服务，需要向这些用户提供对应的修改后源码。

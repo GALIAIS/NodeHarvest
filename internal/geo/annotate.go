@@ -3,10 +3,11 @@ package geo
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 
-	"github.com/local/node-hunter/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
 )
 
 // AnnotateOptions 批量标注选项
@@ -17,8 +18,8 @@ type AnnotateOptions struct {
 	// OnlyEmpty 仅填空（不覆盖已有 Country）
 	OnlyEmpty bool
 	// HQOnly 仅高质量
-	HQOnly   bool
-	MinScore float64
+	HQOnly     bool
+	MinScore   float64
 	OnProgress func(done, total int)
 }
 
@@ -74,6 +75,10 @@ func (l *Locator) AnnotateNodes(nodes []*model.Node, opt AnnotateOptions) int {
 				if r.ISP != "" {
 					n.ISP = r.ISP
 				}
+				if r.ASN != "" {
+					n.ASN = r.ASN
+				}
+				n.EntryType = classifyEntry(n, r)
 				// 标签：国家码 + 旗帜（去重）
 				tag := r.CountryCode
 				flag := FlagEmoji(r.CountryCode)
@@ -97,6 +102,24 @@ func (l *Locator) AnnotateNodes(nodes []*model.Node, opt AnnotateOptions) int {
 	nOK := int(okCount.Load())
 	slog.Info("geo annotate done", "total", total, "ok", nOK, "mmdb", l.Ready())
 	return nOK
+}
+
+func classifyEntry(n *model.Node, result Result) string {
+	if n == nil {
+		return "unknown"
+	}
+	for key, value := range n.Extra {
+		if strings.Contains(strings.ToLower(key+"="+value), "relay") {
+			return "relay"
+		}
+	}
+	text := strings.ToLower(strings.Join([]string{n.Server, n.Host, n.SNI, result.ISP}, " "))
+	for _, marker := range []string{"cloudflare", "akamai", "fastly", "cloudfront", "cdn", "edgekey", "azureedge"} {
+		if strings.Contains(text, marker) {
+			return "cdn"
+		}
+	}
+	return "direct"
 }
 
 func mergeTags(tags []string, add string) []string {

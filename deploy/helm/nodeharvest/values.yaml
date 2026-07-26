@@ -1,0 +1,103 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/galiais/nodeharvest
+  tag: edge
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+server:
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+worker:
+  replicas: 2
+  concurrency: 2
+  resources:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {cpu: "2", memory: 2Gi}
+
+migrations:
+  enabled: true
+  backoffLimit: 3
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+service:
+  type: ClusterIP
+  port: 8080
+
+hosts:
+  public: node.example.com
+  admin: admin.example.com
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}
+  tls:
+    enabled: true
+    publicSecret: nodeharvest-public-tls
+    adminSecret: nodeharvest-admin-tls
+
+secrets:
+  existingSecret: nodeharvest-secrets
+  databaseURLKey: database-url
+  redisURLKey: redis-url
+  subscriptionTokenKey: subscription-token
+  adminTokenKey: admin-token
+  sessionSecretKey: session-secret
+  oidcClientSecretKey: oidc-client-secret
+  alertWebhookSecretKey: alert-webhook-secret
+  objectStoreAccessKeyKey: object-store-access-key
+  objectStoreSecretKeyKey: object-store-secret-key
+
+config:
+  existingConfigMap: ""
+  inline: ""
+
+persistence:
+  enabled: false
+  storageClass: ""
+  accessModes: [ReadWriteMany]
+  size: 10Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}
+
+otelEndpoint: http://otel-collector.observability.svc:4318
+objectStore:
+  endpoint: ""
+  bucket: nodeharvest
+  autoCreateBucket: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

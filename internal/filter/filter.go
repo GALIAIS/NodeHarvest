@@ -4,8 +4,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/local/node-hunter/internal/config"
-	"github.com/local/node-hunter/internal/model"
+	"github.com/GALIAIS/NodeHarvest/internal/config"
+	"github.com/GALIAIS/NodeHarvest/internal/model"
 )
 
 // Apply 按延迟/存活/排序/数量筛选高质量节点

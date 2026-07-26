@@ -1,4 +1,4 @@
-# node-hunter 配置文件
+# NodeHarvest 配置文件
 # 采集 / 解析 / 测试 / 清理 / 筛选 代理节点
 # 订阅源已按 2026-07 实测可用性扩充；失效源请 enabled: false 或替换 URL
 # 维护：configs/sources_catalog.md
@@ -14,6 +14,107 @@ app:
 #   - 大体积聚合源（>1MB）默认开启，可按带宽关闭
 #   - 同内容镜像尽量少开；去重由 cleaner 处理
 sources:
+
+  # ========== 2026 活跃精选（在线校验 206 / 内容可读） ==========
+  # MatinGhanbari：15 分钟更新；精选先于全集，分协议补齐覆盖面
+  - name: matin-super
+    type: subscription
+    url: "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/v2ray/super-sub.txt"
+    enabled: true
+    priority: 100
+    max_bytes: 16777216
+  - name: matin-all
+    type: subscription
+    url: "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/v2ray/all_sub.txt"
+    enabled: true
+    priority: 90
+    max_bytes: 67108864
+  - name: matin-vmess
+    type: subscription
+    url: "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/filtered/subs/vmess.txt"
+    enabled: true
+    priority: 80
+    max_bytes: 16777216
+  - name: matin-vless
+    type: subscription
+    url: "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/filtered/subs/vless.txt"
+    enabled: true
+    priority: 80
+    max_bytes: 16777216
+  - name: matin-trojan
+    type: subscription
+    url: "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/filtered/subs/trojan.txt"
+    enabled: true
+    priority: 80
+    max_bytes: 16777216
+  - name: matin-ss
+    type: subscription
+    url: "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/filtered/subs/ss.txt"
+    enabled: true
+    priority: 80
+    max_bytes: 16777216
+  - name: matin-hy2
+    type: subscription
+    url: "https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/filtered/subs/hysteria2.txt"
+    enabled: true
+    priority: 80
+    max_bytes: 16777216
+
+  # liMilCo：全集 / 最佳 / 最新 + 六种分协议，补 SSR 与 Hysteria2
+  - name: limil-best
+    type: subscription
+    url: "https://raw.githubusercontent.com/liMilCo/v2r/main/best.txt"
+    enabled: true
+    priority: 95
+    max_bytes: 16777216
+  - name: limil-new
+    type: subscription
+    url: "https://raw.githubusercontent.com/liMilCo/v2r/main/new_configs.txt"
+    enabled: true
+    priority: 85
+    max_bytes: 67108864
+  - name: limil-all
+    type: subscription
+    url: "https://raw.githubusercontent.com/liMilCo/v2r/main/all_configs.txt"
+    enabled: true
+    priority: 75
+    max_bytes: 67108864
+  - name: limil-vmess
+    type: subscription
+    url: "https://raw.githubusercontent.com/liMilCo/v2r/main/pro/vmess.txt"
+    enabled: true
+    priority: 70
+    max_bytes: 33554432
+  - name: limil-vless
+    type: subscription
+    url: "https://raw.githubusercontent.com/liMilCo/v2r/main/pro/vless.txt"
+    enabled: true
+    priority: 70
+    max_bytes: 33554432
+  - name: limil-trojan
+    type: subscription
+    url: "https://raw.githubusercontent.com/liMilCo/v2r/main/pro/trojan.txt"
+    enabled: true
+    priority: 70
+    max_bytes: 33554432
+  - name: limil-ss
+    type: subscription
+    url: "https://raw.githubusercontent.com/liMilCo/v2r/main/pro/ss.txt"
+    enabled: true
+    priority: 70
+    max_bytes: 33554432
+  - name: limil-ssr
+    type: subscription
+    url: "https://raw.githubusercontent.com/liMilCo/v2r/main/pro/ssr.txt"
+    enabled: true
+    priority: 70
+    max_bytes: 33554432
+  - name: limil-hy2
+    type: subscription
+    url: "https://raw.githubusercontent.com/liMilCo/v2r/main/pro/hysteria.txt"
+    enabled: true
+    priority: 70
+    max_bytes: 33554432
 
   # ========== 经典免费订阅 ==========
   - name: freefq
@@ -469,6 +570,7 @@ sources:
     type: subscription
     url: "https://raw.githubusercontent.com/ndsphonemy/proxy-sub/main/all.txt"
     enabled: true   # ~34MB 超大，带宽紧张可关
+    max_bytes: 67108864
   # ========== Clash / Mihomo YAML ==========
   - name: free18-clash
     type: clash
@@ -511,6 +613,7 @@ filter:
   min_score: 70
   prune_after_quality: true
   max_store_nodes: 8000
+  collapse_same_ip_ports: false # 可选：相同 IP、凭据与传输参数仅保留一个端口
 
 export:
   dir: "output"
@@ -520,10 +623,11 @@ export:
     - clash
     - json
   filename_prefix: "nodes"
+  keep_runs: 48               # 保留最近 48 轮时间戳导出
 
 
 # 定时任务：VPS 上建议 enabled: true
-# 环境变量 NODE_HUNTER_SCHEDULE=1 可强制开启
+# 环境变量 NODE_HARVEST_SCHEDULE=1 可强制开启
 schedule:
   enabled: true
   interval_min: 30           # 每 30 分钟
@@ -535,13 +639,14 @@ schedule:
   jitter_sec: 45
 
 # 对外订阅发布（其他用户远程拉取）
-# TOKEN 可用环境变量 NODE_HUNTER_TOKEN 覆盖；PUBLIC_URL 用 NODE_HUNTER_PUBLIC_URL
+# TOKEN 可用环境变量 NODE_HARVEST_TOKEN 覆盖；PUBLIC_URL 用 NODE_HARVEST_PUBLIC_URL
 publish:
   enabled: true
-  token: ""                  # 建议生产设置随机串，客户端 ?token=xxx
+  token: ""                  # 建议生产通过 NODE_HARVEST_TOKEN 设置随机串
   path_prefix: "/sub"
   min_score: 70
   max_nodes: 500
+  max_node_age_hours: 24     # 失败源沿用上次结果，但超过 24h 不再发布
   alive_only: true
   formats:
     - raw
@@ -557,8 +662,10 @@ publish:
 geo:
   enabled: true
   db_path: "data/GeoLite2-Country.mmdb"
+  asn_db_path: "data/GeoLite2-ASN.mmdb"
   auto_download: true
   download_url: ""           # 空=内置 P3TERX 镜像
+  asn_download_url: ""
   annotate_after_quality: true
   rename_with_flag: true
 
@@ -568,33 +675,173 @@ geo:
 # 真实协议拨测（需安装 sing-box）
 dial:
   enabled: true
-  bin: "/opt/node-hunter/bin/sing-box"  # 空=PATH 自动查找；本地可改 PATH
+  bin: ""                      # 空=PATH 自动查找；部署用 NODE_HARVEST_SINGBOX
   engine: sing-box
   concurrency: 4
   timeout_sec: 18
   test_url: "https://www.cloudflare.com/cdn-cgi/trace"
+  download_bytes: 262144      # 真实链路吞吐采样最多读取 256 KiB
+  sample_percent: 10          # quality 后默认分层抽测 10%
   max_nodes: 0               # 0=不限制，HQ 有多少测多少
   batch_size: 200            # 多轮真拨每批数量
   after_quality: true        # quality/full 后自动真拨
-  after_quality_max: 0       # 0=全部 HQ（按 batch_size 多轮）
+  after_quality_max: 0       # 0=按 sample_percent 分层抽测
 
 security:
-  admin_token: ""            # 空则管理 API 使用 publish.token / NODE_HUNTER_TOKEN
-  allow_query_token: true
+  admin_token: ""            # 空则管理 API 使用 publish.token / NODE_HARVEST_TOKEN
+  allow_query_token: false   # 避免 token 泄漏到访问日志、历史与 Referer
   sub_rps: 20
   sub_burst: 40
   api_rps: 30
   api_burst: 60
+  login_rps: 0.2            # 每 IP+用户名平均每 5 秒恢复一次
+  login_burst: 5
+
+# 管理身份：本地账号使用 bcrypt 哈希；OIDC 开启时必须配置发现地址与回调。
+# 密钥仅通过 NODE_HARVEST_SESSION_SECRET / NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH /
+# NODE_HARVEST_OIDC_CLIENT_SECRET 注入。
+auth:
+  local_enabled: false
+  bootstrap_user: admin
+  bootstrap_tenant: default
+  bootstrap_password_hash: ""
+  session_secret: ""
+  session_ttl_hours: 12
+  session_cookie_name: nh_session
+  default_role: viewer
+  role_claim: role
+  tenant_claim: tenant
+  admin_host: ""
+  public_host: ""
+  admin_cidrs: []
+  oidc:
+    enabled: false
+    issuer_url: ""
+    client_id: ""
+    client_secret: ""
+    redirect_url: ""
+    scopes: [openid, profile, email]
+    allowed_email_domains: []
 
 server:
   read_header_timeout_sec: 10
+  read_timeout_sec: 30
+  write_timeout_sec: 60
+  idle_timeout_sec: 120
   shutdown_timeout_sec: 30
+  max_header_bytes: 1048576
+  trusted_proxies:
+    - "127.0.0.1/32"
+    - "::1/128"
+  allowed_origins: []        # 空=仅同源；跨域控制台显式填 https://console.example.com
   enable_metrics: true
   enable_pprof: false
 
 sqlite:
   enabled: true
-  path: "data/node-hunter.db"
+  path: "data/nodeharvest.db"
+
+# 持久数据库：默认 SQLite；生产可用 NODE_HARVEST_DATABASE_URL 切换 PostgreSQL。
+database:
+  enabled: true
+  driver: sqlite
+  dsn: "data/nodeharvest.db"
+  max_open_conns: 10
+  max_idle_conns: 5
+  job_retention_days: 30
+  audit_retention_days: 90
+  metric_retention_days: 30
+
+# Redis 为多实例共享订阅缓存与分布式发布锁；NODE_HARVEST_REDIS_URL 可覆盖。
+redis:
+  enabled: false
+  url: ""
+  prefix: nodeharvest
+  cache_ttl_sec: 300
+  lock_ttl_sec: 120
+
+# S3/MinIO 产物库；凭证通过 NODE_HARVEST_OBJECT_STORE_* 环境变量注入。
+object_store:
+  enabled: false
+  endpoint: ""
+  access_key: ""
+  secret_key: ""
+  session_token: ""
+  bucket: nodeharvest
+  prefix: artifacts
+  region: ""
+  auto_create_bucket: false
+
+# 持久优先级队列；内嵌 worker 适合单机，独立 cmd/worker 适合水平扩展。
+queue:
+  enabled: true
+  embedded_workers: 1
+  max_pending: 1000
+  lease_sec: 120
+  poll_ms: 500
+  max_attempts: 3
+  retry_base_sec: 5
+
+governance:
+  disabled_source_countries: []
+  disable_after_failures: 5
+  cooldown_hours: 6
+  hq_drop_percent: 40
+  country_share_percent: 80
+  job_failure_threshold: 2
+  alert_webhook_url: ""     # 可接 Alertmanager/Slack 兼容入口
+  alert_webhook_secret: ""  # 仅通过 NODE_HARVEST_ALERT_WEBHOOK_SECRET 注入
+  terms_url: "/terms"
+
+quality_v2:
+  latency: 0.25
+  success: 0.25
+  stability: 0.15
+  tls: 0.10
+  http: 0.15
+  throughput: 0.10
+
+# 每个智能池有独立 URL 与客户端刷新周期；国家池通过 /sub/country/{CC}/{format}。
+pools:
+  - key: global-hq
+    name: Global HQ
+    min_score: 70
+    refresh_sec: 120
+    max_nodes: 500
+  - key: verified
+    name: Verified
+    min_score: 60
+    require_verified: true
+    refresh_sec: 300
+    max_nodes: 300
+  - key: streaming
+    name: Streaming
+    min_score: 70
+    max_latency_ms: 800
+    protocols: [vless, vmess, trojan, hysteria2]
+    refresh_sec: 180
+    max_nodes: 300
+  - key: ai-friendly
+    name: AI Friendly
+    min_score: 60
+    require_ai: true
+    refresh_sec: 300
+    max_nodes: 300
+  - key: low-latency
+    name: Low Latency
+    min_score: 50
+    max_latency_ms: 300
+    refresh_sec: 120
+    max_nodes: 200
+
+observability:
+  service_name: nodeharvest
+  otlp_endpoint: ""
+  otlp_insecure: false
+  sample_ratio: 0.1
+  export_timeout_sec: 5
+  resource_attrs:
+    deployment.environment: dev
 
 logging:
   level: info

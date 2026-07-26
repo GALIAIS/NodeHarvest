@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// 构建时注入：-ldflags "-X github.com/local/node-hunter/internal/version.Version=..."
+// 构建时注入：-ldflags "-X github.com/GALIAIS/NodeHarvest/internal/version.Version=..."
 var (
 	Version   = "dev"
 	Commit    = "unknown"
