@@ -61,7 +61,6 @@ type DialConfig struct {
 
 // SecurityConfig 认证与限流
 type SecurityConfig struct {
-	AdminToken      string  `yaml:"admin_token"`       // 管理 API；空则回退 publish.token
 	AllowQueryToken bool    `yaml:"allow_query_token"` // 允许 ?token=
 	SubRPS          float64 `yaml:"sub_rps"`           // 订阅限流每 IP
 	SubBurst        int     `yaml:"sub_burst"`
@@ -293,9 +292,6 @@ func Default() *Config {
 			SessionTTLHours:   12,
 			SessionCookieName: "nh_session",
 			BootstrapTenant:   "default",
-			DefaultRole:       "viewer",
-			RoleClaim:         "role",
-			TenantClaim:       "tenant",
 		},
 		Governance: GovernanceConfig{
 			DisableAfterFailures: 5,
@@ -571,9 +567,6 @@ func (c *Config) normalize() {
 	}
 	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_PUBLIC_URL")); v != "" {
 		c.Publish.PublicURL = strings.TrimRight(v, "/")
-	}
-	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_ADMIN_TOKEN")); v != "" {
-		c.Security.AdminToken = v
 	}
 	if v, ok := envBool("NODE_HARVEST_SCHEDULE"); ok {
 		c.Schedule.Enabled = v

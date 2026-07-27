@@ -4,16 +4,14 @@ info:
   version: 3.0.0
   description: |
     Control-plane, inventory, workflow, governance, and subscription API.
-    Management endpoints accept an HttpOnly session cookie, Bearer session, or
-    the legacy X-Admin-Token. Subscription endpoints use Bearer or X-Sub-Token.
+    Management endpoints accept only an HttpOnly session cookie created by local
+    account/password login. Subscription endpoints use Bearer or X-Sub-Token.
     The subscription surface is also mounted at `/api/sub` and may be mounted at
     one additional operator-configured path prefix.
 servers:
   - url: /
 security:
   - sessionCookie: []
-  - bearerSession: []
-  - adminToken: []
 tags:
   - name: Status
   - name: Auth
@@ -54,7 +52,6 @@ paths:
     get:
       tags: [Status]
       summary: Acceptable-use policy
-      security: []
       responses:
         "200": {$ref: "#/components/responses/JSON"}
   /api/v1/auth/login:
@@ -93,7 +90,7 @@ paths:
   /api/v1/auth/me:
     get:
       tags: [Auth]
-      summary: Inspect the current identity and enabled login methods
+      summary: Inspect the current local-account session
       security: []
       responses:
         "200":
@@ -101,31 +98,37 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Session"}
-  /api/v1/auth/oidc/start:
+  /api/public/dashboard:
     get:
-      tags: [Auth]
-      summary: Start OIDC authorization-code login
+      tags: [Status]
+      summary: Safe anonymous dashboard snapshot
       security: []
-      responses:
-        "302": {description: Redirect to identity provider}
-        "404": {$ref: "#/components/responses/Error"}
-  /api/v1/auth/oidc/callback:
-    get:
-      tags: [Auth]
-      summary: Complete OIDC authorization-code login
-      security: []
-      parameters:
-        - {name: state, in: query, required: true, schema: {type: string}}
-        - {name: code, in: query, required: true, schema: {type: string}}
       responses:
         "200": {$ref: "#/components/responses/JSON"}
-        "302": {description: Redirect to console}
-        "400": {$ref: "#/components/responses/Error"}
+  /api/public/dashboard/events:
+    get:
+      tags: [Status]
+      summary: Server-sent anonymous dashboard updates
+      security: []
+      responses:
+        "200":
+          description: event-stream with `dashboard` events
+          content:
+            text/event-stream: {schema: {type: string}}
+  /api/v1/events:
+    get:
+      tags: [Status]
+      summary: Authenticated server-sent refresh events
+      responses:
+        "200":
+          description: event-stream with `dashboard` and `refresh` events
+          content:
+            text/event-stream: {schema: {type: string}}
+        "401": {$ref: "#/components/responses/Error"}
   /api/stats:
     get:
       tags: [Inventory]
       summary: Current node and quality aggregates
-      security: []
       responses:
         "200": {$ref: "#/components/responses/JSON"}
   /api/stats/trends:
@@ -146,7 +149,6 @@ paths:
     get:
       tags: [Inventory]
       summary: Search and cursor-page nodes
-      security: []
       parameters:
         - {$ref: "#/components/parameters/Limit"}
         - {$ref: "#/components/parameters/Cursor"}
@@ -171,7 +173,6 @@ paths:
     get:
       tags: [Inventory]
       summary: Get a node
-      security: []
       parameters:
         - {$ref: "#/components/parameters/ID"}
       responses:
@@ -281,7 +282,6 @@ paths:
     get:
       tags: [Inventory]
       summary: Country aggregates
-      security: []
       parameters:
         - {name: alive, in: query, schema: {type: boolean}}
         - {name: hq, in: query, schema: {type: boolean}}
@@ -292,14 +292,16 @@ paths:
     get:
       tags: [Sources]
       summary: Configured sources with health and contribution
-      security: []
       parameters:
+        - {$ref: "#/components/parameters/Page"}
+        - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Cursor"}
         - name: sort
           in: query
           schema: {type: string, enum: [priority, health, contribution, success], default: priority}
       responses:
         "200":
-          description: Sources; sensitive URL components are redacted for public callers
+          description: Legacy array, or a cursor-page object when `page=1`.
           content:
             application/json:
               schema:
@@ -328,21 +330,18 @@ paths:
     get:
       tags: [Status]
       summary: Redacted effective configuration
-      security: []
       responses:
         "200": {$ref: "#/components/responses/JSON"}
   /api/schedule:
     get:
       tags: [Status]
       summary: Scheduler status and next run
-      security: []
       responses:
         "200": {$ref: "#/components/responses/JSON"}
   /api/pools:
     get:
       tags: [Distribution]
       summary: Smart pool definitions, counts, and URLs
-      security: []
       responses:
         "200":
           description: Pools
@@ -364,9 +363,13 @@ paths:
     get:
       tags: [Administration]
       summary: List tenant subscription credentials and today's usage
+      parameters:
+        - {$ref: "#/components/parameters/Page"}
+        - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Cursor"}
       responses:
         "200":
-          description: Tokens without hashes or plaintext
+          description: Legacy array, or a cursor-page object when `page=1`; hashes and plaintext are omitted.
           content:
             application/json:
               schema: {type: array, items: {$ref: "#/components/schemas/Token"}}
@@ -403,7 +406,9 @@ paths:
       tags: [Administration]
       summary: Query tenant audit entries
       parameters:
+        - {$ref: "#/components/parameters/Page"}
         - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Cursor"}
         - {name: from, in: query, schema: {oneOf: [{type: string, format: date}, {type: string, format: date-time}]}}
         - {name: to, in: query, schema: {oneOf: [{type: string, format: date}, {type: string, format: date-time}]}}
       responses:
@@ -437,7 +442,9 @@ paths:
       tags: [Jobs]
       summary: List tenant durable queue tasks
       parameters:
+        - {$ref: "#/components/parameters/Page"}
         - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Cursor"}
         - {name: status, in: query, schema: {type: string, enum: [queued, running, completed, failed, dead, canceled]}}
       responses:
         "200":
@@ -464,6 +471,10 @@ paths:
     get:
       tags: [Administration]
       summary: List users in the current tenant
+      parameters:
+        - {$ref: "#/components/parameters/Page"}
+        - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Cursor"}
       responses:
         "200":
           description: Users
@@ -521,8 +532,10 @@ paths:
       tags: [Administration]
       summary: List system anomaly alerts
       parameters:
+        - {$ref: "#/components/parameters/Page"}
         - {name: active, in: query, schema: {type: boolean, default: true}}
         - {$ref: "#/components/parameters/Limit"}
+        - {$ref: "#/components/parameters/Cursor"}
       responses:
         "200":
           description: Alerts
@@ -603,14 +616,6 @@ components:
       type: apiKey
       in: cookie
       name: nh_session
-    bearerSession:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-    adminToken:
-      type: apiKey
-      in: header
-      name: X-Admin-Token
     bearerSubscription:
       type: http
       scheme: bearer
@@ -631,6 +636,7 @@ components:
     SubscriptionFormat: {name: format, in: path, required: true, schema: {type: string, enum: [raw, base64, clash, clash.yaml]}}
     Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500}}
     Cursor: {name: cursor, in: query, schema: {type: string}}
+    Page: {name: page, in: query, schema: {type: integer, enum: [1]}, description: Return the paginated response envelope.}
     Days: {name: days, in: query, schema: {type: integer, minimum: 1, maximum: 365, default: 30}}
   responses:
     JSON:
@@ -752,7 +758,6 @@ components:
       properties:
         authenticated: {type: boolean}
         principal: {$ref: "#/components/schemas/Principal"}
-        oidc_enabled: {type: boolean}
         local_enabled: {type: boolean}
     Node:
       type: object
@@ -902,8 +907,6 @@ components:
         email: {type: string, format: email}
         role: {type: string, enum: [viewer, operator, admin]}
         enabled: {type: boolean}
-        oidc_issuer: {type: string}
-        oidc_subject: {type: string}
         created_at: {type: string, format: date-time}
         last_login_at: {type: string, format: date-time}
     Audit:

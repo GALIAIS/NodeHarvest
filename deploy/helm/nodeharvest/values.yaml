@@ -57,9 +57,8 @@ secrets:
   databaseURLKey: database-url
   redisURLKey: redis-url
   subscriptionTokenKey: subscription-token
-  adminTokenKey: admin-token
+  bootstrapPasswordHashKey: bootstrap-password-hash
   sessionSecretKey: session-secret
-  oidcClientSecretKey: oidc-client-secret
   alertWebhookSecretKey: alert-webhook-secret
   objectStoreAccessKeyKey: object-store-access-key
   objectStoreSecretKeyKey: object-store-secret-key

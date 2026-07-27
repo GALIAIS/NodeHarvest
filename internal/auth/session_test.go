@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -27,7 +26,7 @@ func TestLocalSessionRBACAndTamperDetection(t *testing.T) {
 	cfg.BootstrapUser = "admin"
 	cfg.BootstrapHash = hash
 	cfg.SessionSecret = strings.Repeat("s", 32)
-	manager, err := NewManager(context.Background(), cfg, database, "", "")
+	manager, err := NewManager(cfg, database, "")
 	if err != nil {
 		t.Fatal(err)
 	}

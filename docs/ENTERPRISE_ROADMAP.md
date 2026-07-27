@@ -8,7 +8,7 @@
 |---|---|---|---|
 | M1 稳基座 | 探针、优雅退出、原子发布缓存、ETag、限流、备份、指标 | 完成 | `internal/publish`、`internal/metrics`、`deploy/backup.sh` |
 | M2 数据与任务 | PostgreSQL、Redis、节点历史、持久化队列、独立 Worker、死信 | 完成 | `internal/db`、`internal/hotcache`、`cmd/worker`、migrations |
-| M3 企业安全 | 本地/OIDC、JWT、RBAC、多租户、Token 配额与 ACL、审计、热配置 | 完成 | `internal/auth`、管理 API、管理控制台 |
+| M3 企业安全 | 本地账户、签名会话、RBAC、多租户、Token 配额与 ACL、审计、热配置 | 完成 | `internal/auth`、管理 API、管理控制台 |
 | M4 质量运营 | sing-box/xray 真测、吞吐量、评分 v2、智能池、源治理、异常检测 | 完成 | `internal/dialer`、`internal/quality`、`internal/pools` |
 | Operations | OTel、告警、CI、SBOM、Compose、Helm、发布/回滚/恢复 | 完成 | `.github/workflows`、`deploy/` |
 | Product | 趋势、国家、源控制、事件流、Token、用户、审计、告警、系统、合规 | 完成 | `web/src/app` |
@@ -69,7 +69,7 @@ Prometheus 规则和仪表盘数据已就绪；必须在 staging/prod 运行观�
 
 以下动作需要资产所有者授权，不能由代码提交替代：
 
-1. 轮换曾暴露的真实 Token、OIDC secret、数据库和对象存储凭证。
+1. 轮换曾暴露的真实 Token、数据库和对象存储凭证。
 2. 若密钥进入 Git 历史，协调所有协作者后执行历史重写和强制推送。
 3. 创建 DNS、WAF/Access 策略、证书、外部数据库、Redis、S3 bucket 和备份异地副本。
 4. 部署 staging，执行真实源/真实拨测 smoke、容量测试、故障注入和恢复演练。

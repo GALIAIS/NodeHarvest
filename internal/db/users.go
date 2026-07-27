@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/GALIAIS/NodeHarvest/internal/timex"
 )
@@ -17,8 +18,6 @@ type User struct {
 	PasswordHash string `json:"-"`
 	Role         string `json:"role"`
 	Enabled      bool   `json:"enabled"`
-	OIDCIssuer   string `json:"oidc_issuer,omitempty"`
-	OIDCSubject  string `json:"oidc_subject,omitempty"`
 	CreatedAt    string `json:"created_at"`
 	LastLoginAt  string `json:"last_login_at,omitempty"`
 }
@@ -38,9 +37,9 @@ func (s *Store) InsertUser(user *User) error {
 	if user.Enabled {
 		enabled = 1
 	}
-	_, err := s.exec(`INSERT INTO users(id,tenant_id,username,email,password_hash,role,enabled,oidc_issuer,oidc_subject,created_at,last_login_at)
- VALUES(?,?,?,?,?,?,?,?,?,?,?)`, user.ID, user.TenantID, user.Username, user.Email, user.PasswordHash,
-		user.Role, enabled, user.OIDCIssuer, user.OIDCSubject, user.CreatedAt, nullIfEmpty(user.LastLoginAt))
+	_, err := s.exec(`INSERT INTO users(id,tenant_id,username,email,password_hash,role,enabled,created_at,last_login_at)
+ VALUES(?,?,?,?,?,?,?,?,?)`, user.ID, user.TenantID, user.Username, user.Email, user.PasswordHash,
+		user.Role, enabled, user.CreatedAt, nullIfEmpty(user.LastLoginAt))
 	return err
 }
 
@@ -57,59 +56,29 @@ func (s *Store) EnsureBootstrapUser(username, passwordHash, role, tenant string)
 	return err
 }
 
-func (s *Store) UpsertOIDCUser(user *User) error {
-	if user == nil || user.OIDCIssuer == "" || user.OIDCSubject == "" {
-		return fmt.Errorf("OIDC issuer and subject are required")
-	}
-	user.TenantID = tenantOrDefault(user.TenantID)
-	if user.ID == "" {
-		user.ID = "oidc-" + hashID(user.OIDCIssuer+"\x00"+user.OIDCSubject)
-	}
-	if user.CreatedAt == "" {
-		user.CreatedAt = timex.NowRFC3339()
-	}
-	_, err := s.exec(`INSERT INTO users(id,tenant_id,username,email,password_hash,role,enabled,oidc_issuer,oidc_subject,created_at,last_login_at)
- VALUES(?,?,?,?,?,?,1,?,?,?,?)
- ON CONFLICT(oidc_issuer,oidc_subject) DO UPDATE SET
- tenant_id=excluded.tenant_id,username=excluded.username,email=excluded.email,role=excluded.role,
- enabled=1,last_login_at=excluded.last_login_at`,
-		user.ID, user.TenantID, user.Username, user.Email, "", user.Role, user.OIDCIssuer, user.OIDCSubject,
-		user.CreatedAt, timex.NowRFC3339())
-	return err
-}
-
 func (s *Store) FindUser(tenant, username string) (*User, error) {
-	return scanUser(s.queryRow(`SELECT id,tenant_id,username,email,password_hash,role,enabled,
- oidc_issuer,oidc_subject,created_at,last_login_at FROM users WHERE tenant_id=? AND username=?`,
+	return scanUser(s.queryRow(`SELECT id,tenant_id,username,email,password_hash,role,enabled,created_at,last_login_at
+ FROM users WHERE tenant_id=? AND username=?`,
 		tenantOrDefault(tenant), username))
-}
-
-func (s *Store) FindOIDCUser(issuer, subject string) (*User, error) {
-	return scanUser(s.queryRow(`SELECT id,tenant_id,username,email,password_hash,role,enabled,
- oidc_issuer,oidc_subject,created_at,last_login_at FROM users WHERE oidc_issuer=? AND oidc_subject=?`,
-		issuer, subject))
 }
 
 func scanUser(row rowScanner) (*User, error) {
 	var user User
-	var email, password, issuer, subject, last sql.NullString
+	var email, password, last sql.NullString
 	var enabled int
 	if err := row.Scan(&user.ID, &user.TenantID, &user.Username, &email, &password, &user.Role,
-		&enabled, &issuer, &subject, &user.CreatedAt, &last); err != nil {
+		&enabled, &user.CreatedAt, &last); err != nil {
 		return nil, err
 	}
 	user.Email = email.String
 	user.PasswordHash = password.String
-	user.OIDCIssuer = issuer.String
-	user.OIDCSubject = subject.String
 	user.LastLoginAt = last.String
 	user.Enabled = enabled == 1
 	return &user, nil
 }
 
 func (s *Store) ListUsers(tenant string) ([]*User, error) {
-	query := `SELECT id,tenant_id,username,email,password_hash,role,enabled,
- oidc_issuer,oidc_subject,created_at,last_login_at FROM users`
+	query := `SELECT id,tenant_id,username,email,password_hash,role,enabled,created_at,last_login_at FROM users`
 	args := []any{}
 	if tenant != "" {
 		query += ` WHERE tenant_id=?`
@@ -130,6 +99,71 @@ func (s *Store) ListUsers(tenant string) ([]*User, error) {
 		users = append(users, user)
 	}
 	return users, rows.Err()
+}
+
+func (s *Store) ListUsersPage(tenant string, limit int, cursor string) ([]*User, error) {
+	if limit <= 0 || limit > 101 {
+		limit = 26
+	}
+	query := `SELECT id,tenant_id,username,email,password_hash,role,enabled,created_at,last_login_at FROM users`
+	args := []any{}
+	conditions := []string{}
+	if tenant != "" {
+		conditions = append(conditions, `tenant_id=?`)
+		args = append(args, tenantOrDefault(tenant))
+	}
+	if cursor != "" {
+		var cursorTenant, username string
+		cursorQuery := `SELECT tenant_id,username FROM users WHERE id=?`
+		cursorArgs := []any{cursor}
+		if tenant != "" {
+			cursorQuery += ` AND tenant_id=?`
+			cursorArgs = append(cursorArgs, tenantOrDefault(tenant))
+		}
+		if err := s.queryRow(cursorQuery, cursorArgs...).Scan(&cursorTenant, &username); err != nil {
+			return nil, err
+		}
+		if tenant != "" {
+			conditions = append(conditions, `username>?`)
+			args = append(args, username)
+		} else {
+			conditions = append(conditions, `(tenant_id>? OR (tenant_id=? AND username>?))`)
+			args = append(args, cursorTenant, cursorTenant, username)
+		}
+	}
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
+	}
+	query += ` ORDER BY tenant_id,username LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []*User
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+func (s *Store) CountUsers(tenant string) (int, error) {
+	query := `SELECT COUNT(*) FROM users`
+	args := []any{}
+	if tenant != "" {
+		query += ` WHERE tenant_id=?`
+		args = append(args, tenantOrDefault(tenant))
+	}
+	var count int
+	if err := s.queryRow(query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (s *Store) SetUserEnabled(id, tenant string, enabled bool) error {

@@ -688,7 +688,6 @@ dial:
   after_quality_max: 0       # 0=按 sample_percent 分层抽测
 
 security:
-  admin_token: ""            # 空则管理 API 使用 publish.token / NODE_HARVEST_TOKEN
   allow_query_token: false   # 避免 token 泄漏到访问日志、历史与 Referer
   sub_rps: 20
   sub_burst: 40
@@ -697,9 +696,8 @@ security:
   login_rps: 0.2            # 每 IP+用户名平均每 5 秒恢复一次
   login_burst: 5
 
-# 管理身份：本地账号使用 bcrypt 哈希；OIDC 开启时必须配置发现地址与回调。
-# 密钥仅通过 NODE_HARVEST_SESSION_SECRET / NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH /
-# NODE_HARVEST_OIDC_CLIENT_SECRET 注入。
+# 管理身份仅使用本地账号密码。密钥仅通过
+# NODE_HARVEST_SESSION_SECRET / NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH 注入。
 auth:
   local_enabled: false
   bootstrap_user: admin
@@ -708,20 +706,9 @@ auth:
   session_secret: ""
   session_ttl_hours: 12
   session_cookie_name: nh_session
-  default_role: viewer
-  role_claim: role
-  tenant_claim: tenant
   admin_host: ""
   public_host: ""
   admin_cidrs: []
-  oidc:
-    enabled: false
-    issuer_url: ""
-    client_id: ""
-    client_secret: ""
-    redirect_url: ""
-    scopes: [openid, profile, email]
-    allowed_email_domains: []
 
 server:
   read_header_timeout_sec: 10

@@ -16,7 +16,7 @@
 ```bash
 export POSTGRES_PASSWORD="..."
 export NODE_HARVEST_TOKEN="..."
-export NODE_HARVEST_ADMIN_TOKEN="..."
+export NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH="..."
 export NODE_HARVEST_SESSION_SECRET="at-least-32-random-characters"
 export OBJECT_STORE_ACCESS_KEY="..."
 export OBJECT_STORE_SECRET_KEY="..."
@@ -50,9 +50,8 @@ kubectl -n nodeharvest create secret generic nodeharvest-secrets \
   --from-literal=database-url='postgres://...' \
   --from-literal=redis-url='redis://...' \
   --from-literal=subscription-token='...' \
-  --from-literal=admin-token='...' \
+  --from-literal=bootstrap-password-hash='...' \
   --from-literal=session-secret='...' \
-  --from-literal=oidc-client-secret='...' \
   --from-literal=alert-webhook-secret='...' \
   --from-literal=object-store-access-key='...' \
   --from-literal=object-store-secret-key='...'
@@ -139,10 +138,9 @@ sudo APP_DIR=/opt/nodeharvest bash deploy/rollback.sh VERSION
 | `NODE_HARVEST_DATABASE_URL` | PostgreSQL DSN，并自动选择 postgres driver |
 | `NODE_HARVEST_REDIS_URL` | Redis URL |
 | `NODE_HARVEST_TOKEN` | master 订阅凭证 |
-| `NODE_HARVEST_ADMIN_TOKEN` | 应急管理凭证 |
+| `NODE_HARVEST_LOCAL_AUTH` | 设为 `1` 启用本地账号密码登录 |
 | `NODE_HARVEST_SESSION_SECRET` | 会话签名，至少 32 字符 |
 | `NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH` | 本地 bootstrap bcrypt hash |
-| `NODE_HARVEST_OIDC_CLIENT_SECRET` | OIDC client secret |
 | `NODE_HARVEST_EMBEDDED_WORKERS` | API 进程内 Worker 数；多副本设为 0 |
 | `NODE_HARVEST_OBJECT_STORE_ENDPOINT` | S3/MinIO endpoint |
 | `NODE_HARVEST_OBJECT_STORE_ACCESS_KEY` | 对象存储 access key |

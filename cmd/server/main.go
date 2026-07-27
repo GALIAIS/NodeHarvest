@@ -138,9 +138,7 @@ func main() {
 	sch := scheduler.New(cfg, svc)
 	sch.Start()
 
-	authCtx, authCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	am, err := auth.NewManager(authCtx, cfg.Auth, sqlDB, cfg.Publish.Token, cfg.Security.AdminToken)
-	authCancel()
+	am, err := auth.NewManager(cfg.Auth, sqlDB, cfg.Publish.Token)
 	if err != nil {
 		slog.Error("authentication setup", "err", err)
 		os.Exit(1)

@@ -150,14 +150,10 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT,
   role TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
-  oidc_issuer TEXT,
-  oidc_subject TEXT,
   created_at TEXT NOT NULL,
   last_login_at TEXT,
   UNIQUE(tenant_id,username)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc ON users(oidc_issuer,oidc_subject);
-
 CREATE TABLE IF NOT EXISTS token_usage (
   token_id TEXT NOT NULL,
   day TEXT NOT NULL,

@@ -46,14 +46,22 @@ docker compose -f deploy/compose.prod.yml logs --since=30m nodeharvest worker
 
 控制台“任务中心”显示 Job、持久化 Task、Worker 租约、重试次数和事件流。
 
+管理 API 只接受本地账户密码建立的会话 Cookie，不能用订阅 Token 登录或调用管理面：
+
 ```bash
-curl -H "Authorization: Bearer $ADMIN" \
+curl --fail --cookie-jar admin.cookie \
+  -H 'Content-Type: application/json' \
+  --data '{"tenant":"default","username":"admin","password":"..."}' \
+  http://127.0.0.1:8080/api/v1/auth/login
+curl --fail --cookie admin.cookie \
   http://127.0.0.1:8080/api/admin/queue
-curl -H "Authorization: Bearer $ADMIN" \
+curl --fail --cookie admin.cookie \
   "http://127.0.0.1:8080/api/admin/tasks?status=dead"
-curl -X POST -H "Authorization: Bearer $ADMIN" \
+curl --fail -X POST --cookie admin.cookie \
   http://127.0.0.1:8080/api/admin/tasks/JOB_ID/cancel
 ```
+
+限制 `admin.cookie` 的文件权限，并在排障结束后删除它。
 
 排查顺序：
 
@@ -67,9 +75,9 @@ curl -X POST -H "Authorization: Bearer $ADMIN" \
 源连续失败达到阈值后进入冷却；成功探测会更新延迟、成功率、贡献度和健康分。
 
 ```bash
-curl -H "Authorization: Bearer $ADMIN" \
+curl --cookie admin.cookie \
   "http://127.0.0.1:8080/api/sources?sort=health"
-curl -X POST -H "Authorization: Bearer $ADMIN" \
+curl -X POST --cookie admin.cookie \
   http://127.0.0.1:8080/api/admin/sources/SOURCE/probe
 ```
 
@@ -162,6 +170,6 @@ Helm 在 install/upgrade 前运行 `nodeharvest-migrate`；其他部署由 serve
 ### 凭证泄漏
 
 1. 在 Token 页面立即停用或删除受影响 Token。
-2. 若为 master/admin/session secret，替换部署 secret 并滚动重启。
+2. 若为 master 订阅 Token 或 session secret，替换部署 secret 并滚动重启；账户密码泄漏则重置对应账户密码。
 3. 检查审计、访问日志和今日用量。
 4. 对曾进入 Git 的密钥执行提供商侧轮换；历史清理需单独授权和协作。

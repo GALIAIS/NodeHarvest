@@ -161,8 +161,29 @@ export type Principal = {
 export type SessionInfo = {
   authenticated: boolean;
   principal: Principal;
-  oidc_enabled: boolean;
   local_enabled: boolean;
+};
+
+export type DashboardSource = Pick<
+  Source,
+  "name" | "effective_enabled" | "contribution_total" | "contribution_hq" | "health_score" | "latency_ms"
+>;
+
+export type DashboardSnapshot = {
+  updated_at: string;
+  stats: DashboardStats;
+  health: Pick<Health, "ok" | "nodes" | "running_job" | "publish_count" | "publish_fresh">;
+  trends: DailyMetric[];
+  top: NodeItem[];
+  countries: CountryRow[];
+  sources: DashboardSource[];
+};
+
+export type CursorPage = {
+  total?: number;
+  count: number;
+  next_cursor: string;
+  has_more: boolean;
 };
 
 export type TokenRecord = {
@@ -191,8 +212,6 @@ export type UserRecord = {
   email?: string;
   role: "viewer" | "operator" | "admin";
   enabled: boolean;
-  oidc_issuer?: string;
-  oidc_subject?: string;
   created_at: string;
   last_login_at?: string;
 };
@@ -331,16 +350,11 @@ async function requestList<T>(path: string, init?: RequestInit): Promise<T[]> {
 }
 
 async function request<T>(path: string, init?: RequestInit, acceptErrorStatus = false): Promise<T> {
-  const token =
-    typeof window === "undefined"
-      ? ""
-      : window.sessionStorage.getItem("nodeharvest-admin-token") || "";
   const res = await fetch(path, {
     ...init,
     credentials: "same-origin",
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { "X-Admin-Token": token } : {}),
       ...(init?.headers || {}),
     },
     cache: "no-store",
@@ -364,15 +378,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  // Clearing the tab-local admin token is part of signing out: leaving it in
-  // place keeps request() sending X-Admin-Token, so /auth/me stays
-  // authenticated and the login page bounces straight back to the console.
-  logout: async () => {
-    try {
-      return await request<{ authenticated: boolean }>("/api/v1/auth/logout", { method: "POST" });
-    } finally {
-      clearAdminToken();
-    }
+  logout: () => request<{ authenticated: boolean }>("/api/v1/auth/logout", { method: "POST" }),
+  dashboard: async () => {
+    const snapshot = await request<DashboardSnapshot>("/api/public/dashboard");
+    return {
+      ...snapshot,
+      trends: snapshot.trends ?? [],
+      top: snapshot.top ?? [],
+      countries: snapshot.countries ?? [],
+      sources: snapshot.sources ?? [],
+    };
   },
   stats: () => request<DashboardStats>("/api/stats"),
   trends: (days = 30) => requestList<DailyMetric>(`/api/stats/trends?days=${days}`),
@@ -416,12 +431,24 @@ export const api = {
     }),
   tasks: (status = "") =>
     requestList<QueuedTask>(`/api/admin/tasks${params({ limit: 200, status })}`),
+  tasksPage: async (values: Record<string, string | number | boolean | undefined> = {}) => {
+    const page = await request<CursorPage & { tasks: QueuedTask[] | null }>(
+      `/api/admin/tasks${params({ page: 1, limit: 30, ...values })}`,
+    );
+    return { ...page, tasks: page.tasks ?? [] };
+  },
   queue: () =>
     request<{ enabled: boolean; workers?: number; tasks?: Record<string, number> }>(
       "/api/admin/queue",
     ),
   sources: (sort = "priority") =>
     requestList<Source>(`/api/sources${params({ sort })}`),
+  sourcesPage: async (sort = "priority", values: Record<string, string | number | boolean | undefined> = {}) => {
+    const page = await request<CursorPage & { sources: Source[] | null }>(
+      `/api/sources${params({ page: 1, limit: 25, sort, ...values })}`,
+    );
+    return { ...page, sources: page.sources ?? [] };
+  },
   setSourceEnabled: (name: string, enabled: boolean) =>
     request<{ name: string; enabled: boolean }>(
       `/api/admin/sources/${encodeURIComponent(name)}/${enabled ? "enable" : "disable"}`,
@@ -451,6 +478,12 @@ export const api = {
   schedule: () => request<Record<string, unknown>>("/api/schedule"),
   pools: () => requestList<Pool>("/api/pools"),
   tokens: () => requestList<TokenRecord>("/api/admin/tokens"),
+  tokensPage: async (values: Record<string, string | number | boolean | undefined> = {}) => {
+    const page = await request<CursorPage & { tokens: TokenRecord[] | null }>(
+      `/api/admin/tokens${params({ page: 1, limit: 25, ...values })}`,
+    );
+    return { ...page, tokens: page.tokens ?? [] };
+  },
   createToken: (body: Record<string, unknown>) =>
     request<TokenRecord>("/api/admin/tokens", { method: "POST", body: JSON.stringify(body) }),
   setTokenEnabled: (id: string, enabled: boolean) =>
@@ -463,6 +496,12 @@ export const api = {
       method: "DELETE",
     }),
   users: () => requestList<UserRecord>("/api/admin/users"),
+  usersPage: async (values: Record<string, string | number | boolean | undefined> = {}) => {
+    const page = await request<CursorPage & { users: UserRecord[] | null }>(
+      `/api/admin/users${params({ page: 1, limit: 25, ...values })}`,
+    );
+    return { ...page, users: page.users ?? [] };
+  },
   createUser: (body: Record<string, unknown>) =>
     request<UserRecord>("/api/admin/users", { method: "POST", body: JSON.stringify(body) }),
   setUserEnabled: (id: string, enabled: boolean) =>
@@ -472,29 +511,26 @@ export const api = {
     ),
   audit: (values: Record<string, string | number | undefined> = {}) =>
     requestList<AuditEntry>(`/api/admin/audit${params({ limit: 200, ...values })}`),
+  auditPage: async (values: Record<string, string | number | boolean | undefined> = {}) => {
+    const page = await request<CursorPage & { entries: AuditEntry[] | null }>(
+      `/api/admin/audit${params({ page: 1, limit: 50, ...values })}`,
+    );
+    return { ...page, entries: page.entries ?? [] };
+  },
   alerts: (active = true) =>
     requestList<AlertRecord>(`/api/admin/alerts${params({ active, limit: 200 })}`),
+  alertsPage: async (values: Record<string, string | number | boolean | undefined> = {}) => {
+    const page = await request<CursorPage & { alerts: AlertRecord[] | null }>(
+      `/api/admin/alerts${params({ page: 1, limit: 30, ...values })}`,
+    );
+    return { ...page, alerts: page.alerts ?? [] };
+  },
   changeAlert: (id: string, action: "acknowledge" | "resolve") =>
     request<Record<string, unknown>>(
       `/api/admin/alerts/${encodeURIComponent(id)}/${action}`,
       { method: "POST" },
     ),
 };
-
-export function setAdminToken(token: string) {
-  window.sessionStorage.setItem("nodeharvest-admin-token", token.trim());
-}
-
-export function clearAdminToken() {
-  if (typeof window === "undefined") return;
-  window.sessionStorage.removeItem("nodeharvest-admin-token");
-}
-
-export function getAdminToken() {
-  return typeof window === "undefined"
-    ? ""
-    : window.sessionStorage.getItem("nodeharvest-admin-token") || "";
-}
 
 export function exportRawUrl(values: Record<string, string> = {}) {
   return `/api/export/raw${params({ hq: 1, alive: 1, limit: 500, ...values })}`;

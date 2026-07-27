@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -296,8 +297,6 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT,
   role TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
-  oidc_issuer TEXT,
-  oidc_subject TEXT,
   created_at TEXT NOT NULL,
   last_login_at TEXT,
   UNIQUE(tenant_id,username)
@@ -333,7 +332,6 @@ CREATE TABLE IF NOT EXISTS config_versions (
 		`ALTER TABLE tokens ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'`,
 		`ALTER TABLE tokens ADD COLUMN allow_protocols TEXT`,
 		`ALTER TABLE tokens ADD COLUMN daily_quota INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE users ADD COLUMN oidc_issuer TEXT`,
 		`ALTER TABLE alerts ADD COLUMN acknowledged_at TEXT`,
 		`ALTER TABLE alerts ADD COLUMN acknowledged_by TEXT`,
 	} {
@@ -343,9 +341,6 @@ CREATE TABLE IF NOT EXISTS config_versions (
 				return err
 			}
 		}
-	}
-	if _, err := s.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc ON users(oidc_issuer,oidc_subject)`); err != nil {
-		return err
 	}
 	return nil
 }
@@ -666,8 +661,63 @@ func (s *Store) ListAuditTenantRange(limit int, tenant, from, to string) ([]map[
 		limit = 50
 	}
 	query := `SELECT id,at,actor,action,detail FROM audit_logs`
-	args := []any{}
+	conditions, args := auditFilters(tenant, from, to)
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
+	}
+	query += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAuditRows(rows)
+}
+
+func (s *Store) ListAuditPageTenantRange(limit int, cursor, tenant, from, to string) ([]map[string]any, error) {
+	if limit <= 0 || limit > 101 {
+		limit = 51
+	}
+	conditions, args := auditFilters(tenant, from, to)
+	if cursor != "" {
+		id, err := strconv.ParseInt(cursor, 10, 64)
+		if err != nil || id < 1 {
+			return nil, fmt.Errorf("invalid audit cursor")
+		}
+		conditions = append(conditions, `id<?`)
+		args = append(args, id)
+	}
+	query := `SELECT id,at,actor,action,detail FROM audit_logs`
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
+	}
+	query += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAuditRows(rows)
+}
+
+func (s *Store) CountAuditTenantRange(tenant, from, to string) (int, error) {
+	conditions, args := auditFilters(tenant, from, to)
+	query := `SELECT COUNT(*) FROM audit_logs`
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
+	}
+	var count int
+	if err := s.queryRow(query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func auditFilters(tenant, from, to string) ([]string, []any) {
 	conditions := []string{}
+	args := []any{}
 	if tenant != "" {
 		conditions = append(conditions, `(actor LIKE ? OR actor='system')`)
 		args = append(args, tenantOrDefault(tenant)+":%")
@@ -680,16 +730,10 @@ func (s *Store) ListAuditTenantRange(limit int, tenant, from, to string) ([]map[
 		conditions = append(conditions, `at<=?`)
 		args = append(args, to)
 	}
-	if len(conditions) > 0 {
-		query += ` WHERE ` + strings.Join(conditions, ` AND `)
-	}
-	query += ` ORDER BY id DESC LIMIT ?`
-	args = append(args, limit)
-	rows, err := s.query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	return conditions, args
+}
+
+func scanAuditRows(rows *sql.Rows) ([]map[string]any, error) {
 	var out []map[string]any
 	for rows.Next() {
 		var id int
@@ -699,7 +743,7 @@ func (s *Store) ListAuditTenantRange(limit int, tenant, from, to string) ([]map[
 		}
 		out = append(out, map[string]any{"id": id, "at": at, "actor": actor, "action": action, "detail": detail})
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // Token 记录
@@ -766,6 +810,69 @@ func (s *Store) ListTokensTenant(tenant string) ([]*Token, error) {
 		out = append(out, token)
 	}
 	return out, nil
+}
+
+func (s *Store) ListTokensPageTenant(limit int, cursor, tenant string) ([]*Token, error) {
+	if limit <= 0 || limit > 101 {
+		limit = 26
+	}
+	query := `SELECT t.id,t.name,t.token_hash,t.token_prefix,t.enabled,t.max_rps,t.allow_countries,t.expires_at,
+ t.created_at,t.last_used_at,t.note,t.tenant_id,t.allow_protocols,t.daily_quota,
+ COALESCE(u.requests,0),COALESCE(u.bytes,0)
+ FROM tokens t LEFT JOIN token_usage u ON u.token_id=t.id AND u.day=?`
+	args := []any{timex.Now().Format("2006-01-02")}
+	conditions := []string{}
+	if tenant != "" {
+		conditions = append(conditions, `t.tenant_id=?`)
+		args = append(args, tenantOrDefault(tenant))
+	}
+	if cursor != "" {
+		var created string
+		cursorQuery := `SELECT created_at FROM tokens WHERE id=?`
+		cursorArgs := []any{cursor}
+		if tenant != "" {
+			cursorQuery += ` AND tenant_id=?`
+			cursorArgs = append(cursorArgs, tenantOrDefault(tenant))
+		}
+		if err := s.queryRow(cursorQuery, cursorArgs...).Scan(&created); err != nil {
+			return nil, err
+		}
+		conditions = append(conditions, `(t.created_at<? OR (t.created_at=? AND t.id<?))`)
+		args = append(args, created, created, cursor)
+	}
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
+	}
+	query += ` ORDER BY t.created_at DESC,t.id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Token
+	for rows.Next() {
+		token, err := scanTokenUsage(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, token)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CountTokensTenant(tenant string) (int, error) {
+	query := `SELECT COUNT(*) FROM tokens`
+	args := []any{}
+	if tenant != "" {
+		query += ` WHERE tenant_id=?`
+		args = append(args, tenantOrDefault(tenant))
+	}
+	var count int
+	if err := s.queryRow(query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func scanTokenUsage(row rowScanner) (*Token, error) {

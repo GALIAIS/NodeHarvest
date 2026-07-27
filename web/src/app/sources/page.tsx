@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import { api, errorMessage, isAuthError, type Source } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
+import { PaginationControls } from "@/components/pagination-controls";
+import { useLiveRefresh } from "@/components/live-provider";
 import { useSession } from "@/components/session-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -34,10 +36,16 @@ export default function SourcesPage() {
   const [sort, setSort] = useState("priority");
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [total, setTotal] = useState(0);
+  const [nextCursor, setNextCursor] = useState("");
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (cursor = "") => {
     try {
-      setSources(await api.sources(sort));
+      const page = await api.sourcesPage(sort, { cursor: cursor || undefined });
+      setSources(page.sources);
+      setTotal(page.total ?? 0);
+      setNextCursor(page.next_cursor || "");
       setErr(null);
     } catch (cause) {
       setErr(errorMessage(cause, "加载失败"));
@@ -45,9 +53,27 @@ export default function SourcesPage() {
   }, [sort]);
 
   useEffect(() => {
-    const initial = setTimeout(load, 0);
+    const initial = setTimeout(() => {
+      setCursorStack([]);
+      void load();
+    }, 0);
     return () => clearTimeout(initial);
   }, [load]);
+
+  const currentCursor = cursorStack[cursorStack.length - 1] || "";
+  useLiveRefresh(() => load(currentCursor));
+
+  function nextPage() {
+    if (!nextCursor) return;
+    setCursorStack((current) => [...current, nextCursor]);
+    void load(nextCursor);
+  }
+
+  function previousPage() {
+    const previous = cursorStack.slice(0, -1);
+    setCursorStack(previous);
+    void load(previous[previous.length - 1] || "");
+  }
 
   async function act(source: Source, action: "enable" | "disable" | "probe") {
     setBusy(`${source.name}:${action}`);
@@ -55,7 +81,7 @@ export default function SourcesPage() {
     try {
       if (action === "probe") await api.probeSource(source.name);
       else await api.setSourceEnabled(source.name, action === "enable");
-      await load();
+      await load(currentCursor);
     } catch (cause) {
       setErr(isAuthError(cause) ? "需要登录后才能执行此操作" : errorMessage(cause, "操作失败"));
     } finally {
@@ -86,7 +112,7 @@ export default function SourcesPage() {
                 <SelectItem value="success">按成功率</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="secondary" size="sm" onClick={load}>
+            <Button variant="secondary" size="sm" onClick={() => { void load(currentCursor); }}>
               <RefreshCw className="size-3.5" /> 刷新
             </Button>
           </>
@@ -96,10 +122,10 @@ export default function SourcesPage() {
       <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
-            ["源总数", sources.length, "catalog"],
-            ["有效源", enabled, "scheduled"],
-            ["风险源", unhealthy, "health < 60"],
-            ["HQ 贡献", hq, "provenance sum"],
+            ["源总数", total, "catalog"],
+            ["当前页有效源", enabled, "scheduled"],
+            ["当前页风险源", unhealthy, "health < 60"],
+            ["当前页 HQ 贡献", hq, "provenance sum"],
           ].map(([label, value, hint]) => (
             <Card key={label}>
               <CardContent className="p-4">
@@ -139,7 +165,7 @@ export default function SourcesPage() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-[10px] text-muted-foreground">
-                        #{String(index + 1).padStart(3, "0")}
+                        #{String(cursorStack.length * 25 + index + 1).padStart(3, "0")}
                       </span>
                       <h2 className="truncate text-sm font-semibold text-foreground">{source.name}</h2>
                       <Badge variant={active ? "success" : "secondary"}>{active ? "ACTIVE" : "PAUSED"}</Badge>
@@ -248,6 +274,15 @@ export default function SourcesPage() {
             <CardEmpty icon={Play}>暂无采集源</CardEmpty>
           </Card>
         )}
+        <PaginationControls
+          page={cursorStack.length + 1}
+          total={total}
+          count={sources.length}
+          hasNext={Boolean(nextCursor)}
+          onPrevious={previousPage}
+          onNext={nextPage}
+          disabled={Boolean(busy)}
+        />
       </div>
     </div>
   );

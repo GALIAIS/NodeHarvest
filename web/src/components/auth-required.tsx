@@ -55,7 +55,7 @@ export function AuthRequired({
           {description ??
             (forbidden
               ? "该操作需要更高权限，请联系管理员调整角色。"
-              : "该视图属于管理面，登录后即可查看。公开的节点、采集源与订阅数据无需登录。")}
+              : "该视图属于管理面，登录后即可查看。未登录时仅可查看仪表盘。")}
         </p>
       </div>
       {!forbidden && (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Check, Copy, Download, FileJson, Link2, Radio } from "lucide-react";
 import {
   api,
@@ -8,11 +8,11 @@ import {
   errorMessage,
   exportBase64Url,
   exportRawUrl,
-  getAdminToken,
   type Pool,
 } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
 import { useSession } from "@/components/session-provider";
+import { useLiveRefresh } from "@/components/live-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,7 +35,7 @@ const unset = (value: string) => (value === ALL ? "" : value);
 function DownloadHint() {
   return (
     <p className="text-[10px] leading-4 text-muted-foreground">
-      导出接口需要登录；页首的公开订阅端点无需登录即可使用。
+      导出接口需要登录；订阅客户端仅可使用订阅 Token 访问 `/sub` 端点。
     </p>
   );
 }
@@ -62,7 +62,7 @@ export default function ExportPage() {
   // 会话未定时先放行，避免刷新瞬间按钮闪成禁用态
   const canDownload = authenticated || sessionLoading;
 
-  useEffect(() => {
+  const load = useCallback(() => {
     api.config().then((c) => {
       const p = (c.publish || {}) as typeof pub;
       setPub(p);
@@ -72,6 +72,12 @@ export default function ExportPage() {
     api.schedule().then(setSchedule).catch(() => {});
     api.pools().then(setPools).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useLiveRefresh(load, authenticated);
 
   const params: Record<string, string> = {
     limit,
@@ -108,9 +114,7 @@ export default function ExportPage() {
   async function download(url: string, filename: string) {
     try {
       setDownloadError(null);
-      const token = getAdminToken();
       const res = await fetch(url, {
-        headers: token ? { "X-Admin-Token": token } : {},
         credentials: "same-origin",
         cache: "no-store",
       });
@@ -142,7 +146,7 @@ export default function ExportPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Radio className="size-4 text-primary" />
-              公开订阅端点
+              订阅客户端端点
             </CardTitle>
             <CardDescription>
               客户端直接填这些 URL（定时任务会持续刷新高质量池）

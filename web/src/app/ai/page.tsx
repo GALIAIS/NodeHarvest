@@ -13,6 +13,7 @@ import { AuthRequired } from "@/components/auth-required";
 import { JobActions } from "@/components/job-actions";
 import { PageHeader } from "@/components/page-header";
 import { useSession } from "@/components/session-provider";
+import { useLiveRefresh } from "@/components/live-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -55,12 +56,12 @@ export default function AIPage() {
 
   useEffect(() => {
     const initial = setTimeout(load, 0);
-    const t = setInterval(load, 5000);
     return () => {
       clearTimeout(initial);
-      clearInterval(t);
     };
   }, [load]);
+
+  useLiveRefresh(load, authenticated);
 
   return (
     <div className="flex flex-1 flex-col">
@@ -103,13 +104,13 @@ export default function AIPage() {
                 compact
                 reason="forbidden"
                 title="当前角色无法运行任务"
-                description="AI 探测任务需要 operator 及以上权限。运行结果无需登录即可查看。"
+                description="AI 探测任务需要 operator 及以上权限。"
               />
             ) : (
               <AuthRequired
                 compact
                 title="需要登录后运行任务"
-                description="AI 探测任务需要 operator 及以上权限。运行结果无需登录即可查看。"
+                description="AI 探测任务需要 operator 及以上权限。"
               />
             )}
           </CardContent>

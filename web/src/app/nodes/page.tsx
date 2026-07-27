@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { AlertTriangle, Check, Copy, Filter, Network, RefreshCw, Search } from "lucide-react";
 import { api, type CountryRow, type NodeItem } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
+import { PaginationControls } from "@/components/pagination-controls";
+import { useLiveRefresh } from "@/components/live-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,13 +58,14 @@ export default function NodesPage() {
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [nextCursor, setNextCursor] = useState("");
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
 
   const load = useCallback(
-    async (cursor = "", append = false) => {
+    async (cursor = "") => {
       setLoading(true);
       try {
         const res = await api.nodes({
-          limit: 200,
+          limit: 50,
           q: q || undefined,
           protocol: unset(protocol) || undefined,
           grade: unset(grade) || undefined,
@@ -74,7 +77,7 @@ export default function NodesPage() {
           min_score: minScore || (hq ? 70 : undefined),
           cursor: cursor || undefined,
         });
-        setNodes((current) => (append ? [...current, ...res.nodes] : res.nodes));
+        setNodes(res.nodes);
         setTotal(res.total);
         setNextCursor(res.next_cursor || "");
         setErr(null);
@@ -88,7 +91,10 @@ export default function NodesPage() {
   );
 
   useEffect(() => {
-    const initial = setTimeout(load, 0);
+    const initial = setTimeout(() => {
+      setCursorStack([]);
+      void load();
+    }, 0);
     return () => clearTimeout(initial);
   }, [load]);
 
@@ -98,6 +104,21 @@ export default function NodesPage() {
       .then((result) => setCountries(result.countries))
       .catch(() => {});
   }, []);
+
+  const currentCursor = cursorStack[cursorStack.length - 1] || "";
+  useLiveRefresh(() => load(currentCursor));
+
+  function nextPage() {
+    if (!nextCursor) return;
+    setCursorStack((current) => [...current, nextCursor]);
+    void load(nextCursor);
+  }
+
+  function previousPage() {
+    const previous = cursorStack.slice(0, -1);
+    setCursorStack(previous);
+    void load(previous[previous.length - 1] || "");
+  }
 
   async function copyURI(uri: string, id: string) {
     try {
@@ -116,7 +137,7 @@ export default function NodesPage() {
         title="节点资产库"
         description={`按国家、协议、评分、真实拨测与 AI 可达性筛选 · 当前 ${total} 条`}
         actions={
-          <Button variant="secondary" size="sm" onClick={() => load()} disabled={loading}>
+          <Button variant="secondary" size="sm" onClick={() => { setCursorStack([]); void load(); }} disabled={loading}>
             <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
             刷新
           </Button>
@@ -331,7 +352,7 @@ export default function NodesPage() {
                             </span>
                           </TooltipTrigger>
                           <TooltipContent side="left">
-                            {node.raw_uri ? "复制 URI" : "输入管理 Token 后可复制"}
+                            {node.raw_uri ? "复制 URI" : "仅管理员可复制 URI"}
                           </TooltipContent>
                         </Tooltip>
                       </TableCell>
@@ -348,13 +369,15 @@ export default function NodesPage() {
           </CardContent>
         </Card>
 
-        {nextCursor && (
-          <div className="flex justify-center">
-            <Button variant="secondary" disabled={loading} onClick={() => load(nextCursor, true)}>
-              {loading ? "加载中…" : `继续加载（已显示 ${nodes.length}/${total}）`}
-            </Button>
-          </div>
-        )}
+        <PaginationControls
+          page={cursorStack.length + 1}
+          total={total}
+          count={nodes.length}
+          hasNext={Boolean(nextCursor)}
+          onPrevious={previousPage}
+          onNext={nextPage}
+          disabled={loading}
+        />
       </div>
     </div>
   );

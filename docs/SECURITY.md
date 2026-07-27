@@ -2,11 +2,11 @@
 
 ## 身份与权限
 
-- 本地账户密码使用 bcrypt；OIDC 使用授权码流程、discovery、JWKS、nonce、issuer 和 audience 校验。
+- 控制台只使用本地账户密码，密码以 bcrypt 保存；不接受 Token、Bearer 或外部身份提供商登录。
 - 会话为 HS256 签名 JWT，放入 HttpOnly、SameSite=Lax Cookie；生产必须使用 HTTPS。
 - 角色为 `viewer`、`operator`、`admin`，所有任务、Token、用户与审计读取按租户隔离。
 - 系统级源与热配置仅允许 `default` 租户 admin 修改。
-- 兼容 `X-Admin-Token` 仅用于迁移或应急；常规管理推荐账户/OIDC。
+- 未登录调用仅允许健康检查、登录会话和脱敏仪表盘；其余 API、导出与所有操作均要求会话 Cookie。
 
 ## 订阅凭证
 
@@ -37,10 +37,8 @@
 
 ```text
 NODE_HARVEST_TOKEN
-NODE_HARVEST_ADMIN_TOKEN
 NODE_HARVEST_SESSION_SECRET
 NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH
-NODE_HARVEST_OIDC_CLIENT_SECRET
 NODE_HARVEST_ALERT_WEBHOOK_SECRET
 NODE_HARVEST_OBJECT_STORE_ACCESS_KEY
 NODE_HARVEST_OBJECT_STORE_SECRET_KEY
@@ -98,7 +96,7 @@ TLS 证书验证默认开启。只有采集 URI 显式携带 `insecure=true`、
 
 - [ ] 已替换所有默认/示例密钥，session secret 至少 32 个随机字符。
 - [ ] 管理域名受 VPN/Access/IP allowlist 保护。
-- [ ] 公网域名不能访问 `/api/admin`、`/metrics`、`/debug`。
+- [ ] 公网匿名浏览器只能访问仪表盘；`/api/admin`、`/metrics`、`/debug` 和其余管理 API 必须返回 401/403。
 - [ ] 数据库、Redis、对象存储未直接暴露公网。
 - [ ] `allow_query_token=false`，除非客户端兼容性明确要求。
 - [ ] CORS、trusted proxies、admin CIDRs 使用精确列表。

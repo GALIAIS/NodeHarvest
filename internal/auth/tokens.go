@@ -19,17 +19,14 @@ import (
 type Manager struct {
 	DB            *db.Store
 	MasterToken   string // NODE_HARVEST_TOKEN / publish.token
-	AdminToken    string // NODE_HARVEST_ADMIN_TOKEN，管理 API
 	SessionSecret string
 	SessionTTL    time.Duration
 	CookieName    string
 	LocalEnabled  bool
-	DefaultRole   Role
-	oidc          *OIDCClient
 }
 
 type Principal struct {
-	Kind           string   `json:"kind"` // master | db | admin | public
+	Kind           string   `json:"kind"` // master | db | local | session | public
 	TokenID        string   `json:"token_id,omitempty"`
 	Name           string   `json:"name"`
 	AllowCountries []string `json:"allow_countries,omitempty"`
@@ -124,14 +121,6 @@ func (m *Manager) ValidateSubToken(plain string) (*Principal, error) {
 		DailyQuota:     t.DailyQuota,
 		TenantID:       tenantOrDefault(t.TenantID),
 	}, nil
-}
-
-func (m *Manager) ValidateAdmin(plain string) bool {
-	if m.AdminToken == "" {
-		// 回退 master token
-		return secureEqual(plain, m.MasterToken)
-	}
-	return secureEqual(plain, m.AdminToken)
 }
 
 func (m *Manager) CreateToken(name, note, tenant string, countries, protocols []string, days int, maxRPS float64, dailyQuota int64, actor string) (*db.Token, error) {

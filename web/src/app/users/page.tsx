@@ -5,7 +5,9 @@ import { AlertTriangle, Ban, Plus, Power, Shield, UserRound } from "lucide-react
 import { api, errorMessage, isAuthError, type UserRecord } from "@/lib/api";
 import { AuthRequired } from "@/components/auth-required";
 import { PageHeader } from "@/components/page-header";
+import { PaginationControls } from "@/components/pagination-controls";
 import { useSession } from "@/components/session-provider";
+import { useLiveRefresh } from "@/components/live-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,10 +40,16 @@ export default function UsersPage() {
   const [error, setError] = useState("");
   // 401/403 is a normal "sign in first" state, rendered via AuthRequired.
   const [authBlocked, setAuthBlocked] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [nextCursor, setNextCursor] = useState("");
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (cursor = "") => {
     try {
-      setUsers(await api.users());
+      const page = await api.usersPage({ cursor: cursor || undefined });
+      setUsers(page.users);
+      setTotal(page.total ?? 0);
+      setNextCursor(page.next_cursor || "");
       setAuthBlocked(false);
       setError("");
     } catch (cause) {
@@ -57,9 +65,27 @@ export default function UsersPage() {
   useEffect(() => {
     // Admin-only endpoint: never fire it for anonymous visitors.
     if (!authenticated) return;
-    const initial = setTimeout(load, 0);
+    const initial = setTimeout(() => {
+      setCursorStack([]);
+      void load();
+    }, 0);
     return () => clearTimeout(initial);
   }, [authenticated, load]);
+
+  const currentCursor = cursorStack[cursorStack.length - 1] || "";
+  useLiveRefresh(() => load(currentCursor), authenticated && !authBlocked);
+
+  function nextPage() {
+    if (!nextCursor) return;
+    setCursorStack((current) => [...current, nextCursor]);
+    void load(nextCursor);
+  }
+
+  function previousPage() {
+    const previous = cursorStack.slice(0, -1);
+    setCursorStack(previous);
+    void load(previous[previous.length - 1] || "");
+  }
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -67,7 +93,7 @@ export default function UsersPage() {
     try {
       await api.createUser(form);
       setForm({ username: "", email: "", password: "", role: "viewer" });
-      await load();
+      await load(currentCursor);
     } catch (cause) {
       if (isAuthError(cause)) {
         setAuthBlocked(true);
@@ -84,7 +110,7 @@ export default function UsersPage() {
     setBusy(user.id);
     try {
       await api.setUserEnabled(user.id, !user.enabled);
-      await load();
+      await load(currentCursor);
     } catch (cause) {
       if (isAuthError(cause)) {
         setAuthBlocked(true);
@@ -106,7 +132,7 @@ export default function UsersPage() {
       <PageHeader
         eyebrow="Tenant access control"
         title="用户与角色"
-        description="当前租户内的本地与 OIDC 身份。viewer 只读，operator 可运行任务，admin 可管理用户和凭证。"
+        description="当前租户内的本地账号。viewer 只读，operator 可运行任务，admin 可管理用户和凭证。"
       />
       <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
         {error && (
@@ -122,7 +148,8 @@ export default function UsersPage() {
             description="租户内的身份与角色管理属于管理面，登录后可查看。"
           />
         ) : (
-        <div className="grid gap-4 xl:grid-cols-[minmax(320px,.55fr)_minmax(0,1.45fr)]">
+          <>
+            <div className="grid gap-4 xl:grid-cols-[minmax(320px,.55fr)_minmax(0,1.45fr)]">
           <Card className="h-fit">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -188,7 +215,6 @@ export default function UsersPage() {
                   <TableRow>
                     <TableHead>身份</TableHead>
                     <TableHead>角色</TableHead>
-                    <TableHead>来源</TableHead>
                     <TableHead>状态</TableHead>
                     <TableHead>最近登录</TableHead>
                     <TableHead>创建</TableHead>
@@ -225,9 +251,6 @@ export default function UsersPage() {
                           {user.role}
                         </Badge>
                       </TableCell>
-                      <TableCell className="font-mono text-[10px] text-muted-foreground">
-                        {user.oidc_issuer ? "OIDC" : "LOCAL"}
-                      </TableCell>
                       <TableCell>
                         <Badge variant={user.enabled ? "success" : "secondary"}>
                           {user.enabled ? "ACTIVE" : "DISABLED"}
@@ -257,7 +280,7 @@ export default function UsersPage() {
                     </TableRow>
                   ))}
                   {users.length === 0 && (
-                    <TableEmpty colSpan={7} icon={UserRound}>
+                    <TableEmpty colSpan={6} icon={UserRound}>
                       暂无用户或当前身份无权查看
                     </TableEmpty>
                   )}
@@ -265,7 +288,17 @@ export default function UsersPage() {
               </Table>
             </CardContent>
           </Card>
-        </div>
+            </div>
+            <PaginationControls
+              page={cursorStack.length + 1}
+              total={total}
+              count={users.length}
+              hasNext={Boolean(nextCursor)}
+              onPrevious={previousPage}
+              onNext={nextPage}
+              disabled={Boolean(busy)}
+            />
+          </>
         )}
       </div>
     </div>

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -48,6 +49,41 @@ type Server struct {
 	started time.Time
 }
 
+type publicDashboard struct {
+	UpdatedAt string                `json:"updated_at"`
+	Stats     model.DashboardStats  `json:"stats"`
+	Health    publicDashboardHealth `json:"health"`
+	Trends    []db.DailyMetric      `json:"trends"`
+	Top       []*model.Node         `json:"top"`
+	Countries []dashboardCountry    `json:"countries"`
+	Sources   []dashboardSource     `json:"sources"`
+}
+
+type publicDashboardHealth struct {
+	OK           bool `json:"ok"`
+	Nodes        int  `json:"nodes"`
+	RunningJob   bool `json:"running_job"`
+	PublishCount int  `json:"publish_count"`
+	PublishFresh bool `json:"publish_fresh"`
+}
+
+type dashboardCountry struct {
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	Flag    string `json:"flag"`
+	Count   int    `json:"count"`
+	Display string `json:"display"`
+}
+
+type dashboardSource struct {
+	Name              string  `json:"name"`
+	EffectiveEnabled  bool    `json:"effective_enabled"`
+	ContributionTotal int     `json:"contribution_total"`
+	ContributionHQ    int     `json:"contribution_hq"`
+	HealthScore       float64 `json:"health_score"`
+	LatencyMS         int64   `json:"latency_ms"`
+}
+
 func New(svc *service.Service, sch *scheduler.Scheduler, am *auth.Manager) *Server {
 	cfg := svc.Config()
 	s := &Server{
@@ -62,7 +98,6 @@ func New(svc *service.Service, sch *scheduler.Scheduler, am *auth.Manager) *Serv
 	if s.auth == nil {
 		s.auth = &auth.Manager{
 			MasterToken: cfg.Publish.Token,
-			AdminToken:  cfg.Security.AdminToken,
 			DB:          svc.DB(),
 		}
 	}
@@ -78,7 +113,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) buildHandler() http.Handler {
 	cfg := s.svc.Config()
 	var h http.Handler = s.mux
-	h = managementBoundary(h, cfg)
+	h = managementBoundary(h, cfg, s.auth)
 	h = cors(h, cfg.Server.AllowedOrigins)
 	// 全局限流（API 稍宽）
 	apiRL := middleware.NewTokenBucket(cfg.Security.APIRPS, cfg.Security.APIBurst)
@@ -95,8 +130,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("GET /api/v1/auth/me", s.handleMe)
-	s.mux.HandleFunc("GET /api/v1/auth/oidc/start", s.handleOIDCStart)
-	s.mux.HandleFunc("GET /api/v1/auth/oidc/callback", s.handleOIDCCallback)
+	s.mux.HandleFunc("GET /api/public/dashboard", s.handlePublicDashboard)
+	s.mux.HandleFunc("GET /api/public/dashboard/events", s.handlePublicDashboardEvents)
+	s.mux.HandleFunc("GET /api/v1/events", s.handleEvents)
 	s.mux.HandleFunc("GET /api/stats", s.handleStats)
 	s.mux.HandleFunc("GET /api/nodes", s.handleNodes)
 	s.mux.HandleFunc("GET /api/nodes/{id}", s.handleNode)
@@ -135,7 +171,7 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("GET /debug/pprof/trace", s.adminOnly(httppprof.Trace))
 	}
 
-	// admin (token required)
+	// admin (authenticated session required)
 	s.mux.HandleFunc("GET /api/admin/tokens", s.handleAdminListTokens)
 	s.mux.HandleFunc("POST /api/admin/tokens", s.handleAdminCreateToken)
 	s.mux.HandleFunc("DELETE /api/admin/tokens/{id}", s.handleAdminDeleteToken)
@@ -225,6 +261,154 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"schedule":           cfg.Schedule.Enabled,
 		"sources_unhealthy":  sourceUnhealthy,
 	})
+}
+
+func (s *Server) publicDashboard() publicDashboard {
+	cfg := s.svc.Config()
+	dbOK := s.svc.DB() == nil || s.svc.DB().Ping() == nil
+	redisOK := s.svc.HotCache() == nil || s.svc.HotCache().Ping(context.Background()) == nil
+	blob := s.svc.PublishCache().Get()
+	health := publicDashboardHealth{
+		OK:         dbOK && redisOK,
+		Nodes:      s.svc.Store().Count(),
+		RunningJob: s.svc.IsRunning(),
+	}
+	if blob != nil {
+		health.PublishCount = blob.Count
+		health.PublishFresh = blob.Fresh(s.publishCacheMaxAge())
+	}
+	top := s.svc.Store().ListNodes(store.NodeFilter{
+		AliveOnly: true, HighQuality: true, Limit: 6,
+	})
+	redactNodes(top)
+	trends := []db.DailyMetric{}
+	if database := s.svc.DB(); database != nil {
+		if rows, err := database.DailyNodeMetrics("", 30); err == nil {
+			trends = rows
+		}
+	}
+	return publicDashboard{
+		UpdatedAt: timex.NowRFC3339(),
+		Stats:     s.svc.Store().Stats(len(s.svc.EnabledSources())),
+		Health:    health,
+		Trends:    trends,
+		Top:       top,
+		Countries: s.dashboardCountries(),
+		Sources:   s.dashboardSources(cfg),
+	}
+}
+
+func (s *Server) dashboardCountries() []dashboardCountry {
+	nodes := s.svc.Store().ListNodes(store.NodeFilter{
+		AliveOnly: true, HighQuality: true, MinScore: s.svc.Config().Filter.MinScore, Limit: 5000,
+	})
+	counts := map[string]int{}
+	for _, node := range nodes {
+		code := countryCode(node.Country)
+		if code == "" {
+			code = "XX"
+		}
+		counts[code]++
+	}
+	list := make([]dashboardCountry, 0, len(counts))
+	for code, count := range counts {
+		list = append(list, dashboardCountry{
+			Code: code, Name: geo.ISOToName(code), Flag: geo.FlagEmoji(code),
+			Count: count, Display: countryDisplay(code),
+		})
+	}
+	sort.SliceStable(list, func(i, j int) bool {
+		if list[i].Count != list[j].Count {
+			return list[i].Count > list[j].Count
+		}
+		return list[i].Code < list[j].Code
+	})
+	if len(list) > 8 {
+		return list[:8]
+	}
+	return list
+}
+
+func (s *Server) dashboardSources(cfg *config.Config) []dashboardSource {
+	states := s.svc.SourceStates()
+	effective := make(map[string]bool)
+	for _, source := range s.svc.EnabledSources() {
+		effective[source.Name] = true
+	}
+	list := make([]dashboardSource, 0, len(cfg.Sources))
+	for _, source := range cfg.Sources {
+		state := states[source.Name]
+		list = append(list, dashboardSource{
+			Name: source.Name, EffectiveEnabled: effective[source.Name],
+			ContributionTotal: state.ContributionTotal, ContributionHQ: state.ContributionHQ,
+			HealthScore: state.HealthScore, LatencyMS: state.LatencyMS,
+		})
+	}
+	sort.SliceStable(list, func(i, j int) bool {
+		if list[i].HealthScore != list[j].HealthScore {
+			return list[i].HealthScore < list[j].HealthScore
+		}
+		return list[i].Name < list[j].Name
+	})
+	if len(list) > 5 {
+		return list[:5]
+	}
+	return list
+}
+
+func (s *Server) handlePublicDashboard(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.publicDashboard())
+}
+
+func (s *Server) handlePublicDashboardEvents(w http.ResponseWriter, r *http.Request) {
+	s.serveDashboardEvents(w, r, false)
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if s.requireRole(w, r, auth.RoleViewer) == nil {
+		return
+	}
+	s.serveDashboardEvents(w, r, true)
+}
+
+func (s *Server) serveDashboardEvents(w http.ResponseWriter, r *http.Request, management bool) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming is unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		if err := writeSSE(w, "dashboard", s.publicDashboard()); err != nil {
+			return
+		}
+		if management {
+			if err := writeSSE(w, "refresh", map[string]string{"at": timex.NowRFC3339()}); err != nil {
+				return
+			}
+		}
+		flusher.Flush()
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func writeSSE(w http.ResponseWriter, name string, payload any) error {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, encoded)
+	return err
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
@@ -336,71 +520,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"authenticated": principal.Authenticated,
 		"principal":     principal,
-		"oidc_enabled":  s.auth.OIDCEnabled(),
 		"local_enabled": s.svc.Config().Auth.LocalEnabled,
 	})
-}
-
-func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
-	if !s.auth.OIDCEnabled() {
-		http.Error(w, "OIDC is disabled", http.StatusNotFound)
-		return
-	}
-	state, _, _, err := auth.NewTokenPlain()
-	if err != nil {
-		http.Error(w, "entropy unavailable", http.StatusInternalServerError)
-		return
-	}
-	nonce, _, _, err := auth.NewTokenPlain()
-	if err != nil {
-		http.Error(w, "entropy unavailable", http.StatusInternalServerError)
-		return
-	}
-	for name, value := range map[string]string{"nh_oidc_state": state, "nh_oidc_nonce": nonce} {
-		// #nosec G124 -- HttpOnly and SameSite are fixed; Secure follows the TLS/proxy scheme for localhost development.
-		http.SetCookie(w, &http.Cookie{
-			Name: name, Value: value, Path: "/api/v1/auth/oidc/callback", HttpOnly: true,
-			Secure: requestHTTPS(r), SameSite: http.SameSiteLaxMode, MaxAge: 600,
-		})
-	}
-	target, err := s.auth.OIDCAuthURL(state, nonce)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	http.Redirect(w, r, target, http.StatusFound)
-}
-
-func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
-	stateCookie, stateErr := r.Cookie("nh_oidc_state")
-	nonceCookie, nonceErr := r.Cookie("nh_oidc_nonce")
-	if stateErr != nil || nonceErr != nil || stateCookie.Value == "" ||
-		stateCookie.Value != r.URL.Query().Get("state") {
-		http.Error(w, "invalid OIDC state", http.StatusBadRequest)
-		return
-	}
-	if providerError := r.URL.Query().Get("error"); providerError != "" {
-		http.Error(w, "OIDC provider error", http.StatusUnauthorized)
-		return
-	}
-	principal, session, err := s.auth.ExchangeOIDC(r.Context(), r.URL.Query().Get("code"), nonceCookie.Value)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
-	}
-	s.setSessionCookie(w, r, session)
-	for _, name := range []string{"nh_oidc_state", "nh_oidc_nonce"} {
-		// #nosec G124 -- HttpOnly and SameSite are fixed; Secure follows the TLS/proxy scheme for localhost development.
-		http.SetCookie(w, &http.Cookie{
-			Name: name, Value: "", Path: "/api/v1/auth/oidc/callback", HttpOnly: true,
-			Secure: requestHTTPS(r), SameSite: http.SameSiteLaxMode, MaxAge: -1,
-		})
-	}
-	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, map[string]any{"authenticated": true, "principal": principal})
-		return
-	}
-	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, session string) {
@@ -784,6 +905,54 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"canceled": ok})
 }
 
+func wantsPage(r *http.Request) bool {
+	return r.URL.Query().Get("page") == "1"
+}
+
+func requestedPageLimit(r *http.Request, fallback int) int {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		return fallback
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
+}
+
+func pageWindow[T any](items []T, limit int) ([]T, bool) {
+	if len(items) > limit {
+		return items[:limit], true
+	}
+	return items, false
+}
+
+func pageSlice[T any](items []T, cursor string, limit int, key func(T) string) ([]T, string, bool, error) {
+	start := 0
+	if cursor != "" {
+		start = -1
+		for i, item := range items {
+			if key(item) == cursor {
+				start = i + 1
+				break
+			}
+		}
+		if start < 0 {
+			return nil, "", false, fmt.Errorf("invalid cursor")
+		}
+	}
+	end := start + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	page := items[start:end]
+	next := ""
+	if end < len(items) && len(page) > 0 {
+		next = key(page[len(page)-1])
+	}
+	return page, next, next != "", nil
+}
+
 func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 	cfg := s.svc.Config()
 	sortBy := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
@@ -861,7 +1030,21 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
 			return list[i].Priority > list[j].Priority
 		}
 	})
-	writeJSON(w, list)
+	if !wantsPage(r) {
+		writeJSON(w, list)
+		return
+	}
+	page, next, hasMore, err := pageSlice(list, r.URL.Query().Get("cursor"), requestedPageLimit(r, 25), func(item src) string {
+		return item.Name
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"total": len(list), "count": len(page), "sources": page,
+		"next_cursor": next, "has_more": hasMore,
+	})
 }
 
 func (s *Server) handleAITargets(w http.ResponseWriter, r *http.Request) {
@@ -952,7 +1135,6 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"security": map[string]any{
 			"allow_query_token": cfg.Security.AllowQueryToken,
 			"sub_rps":           cfg.Security.SubRPS,
-			"admin_token_set":   cfg.Security.AdminToken != "" || cfg.Publish.Token != "",
 		},
 		"sqlite": cfg.SQLite.Enabled,
 		"server": map[string]any{
@@ -982,7 +1164,6 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		},
 		"auth": map[string]any{
 			"local_enabled": cfg.Auth.LocalEnabled,
-			"oidc_enabled":  cfg.Auth.OIDC.Enabled,
 			"admin_host":    cfg.Auth.AdminHost,
 			"public_host":   cfg.Auth.PublicHost,
 		},
@@ -1651,7 +1832,34 @@ func (s *Server) handleAdminListTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.svc.DB() == nil {
+		if wantsPage(r) {
+			writeJSON(w, map[string]any{"total": 0, "count": 0, "tokens": []any{}, "next_cursor": "", "has_more": false})
+			return
+		}
 		writeJSON(w, []any{})
+		return
+	}
+	if wantsPage(r) {
+		limit := requestedPageLimit(r, 25)
+		list, err := s.svc.DB().ListTokensPageTenant(limit+1, r.URL.Query().Get("cursor"), principal.TenantID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		total, err := s.svc.DB().CountTokensTenant(principal.TenantID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		page, hasMore := pageWindow(list, limit)
+		next := ""
+		if hasMore {
+			next = page[len(page)-1].ID
+		}
+		writeJSON(w, map[string]any{
+			"total": total, "count": len(page), "tokens": page,
+			"next_cursor": next, "has_more": hasMore,
+		})
 		return
 	}
 	list, err := s.svc.DB().ListTokensTenant(principal.TenantID)
@@ -1745,6 +1953,10 @@ func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.svc.DB() == nil {
+		if wantsPage(r) {
+			writeJSON(w, map[string]any{"total": 0, "count": 0, "entries": []any{}, "next_cursor": "", "has_more": false})
+			return
+		}
 		writeJSON(w, []any{})
 		return
 	}
@@ -1757,6 +1969,29 @@ func (s *Server) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 	to, err := auditBound(r.URL.Query().Get("to"), true)
 	if err != nil {
 		http.Error(w, "invalid to date", http.StatusBadRequest)
+		return
+	}
+	if wantsPage(r) {
+		limit = requestedPageLimit(r, 50)
+		list, err := s.svc.DB().ListAuditPageTenantRange(limit+1, r.URL.Query().Get("cursor"), principal.TenantID, from, to)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		total, err := s.svc.DB().CountAuditTenantRange(principal.TenantID, from, to)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		page, hasMore := pageWindow(list, limit)
+		next := ""
+		if hasMore {
+			next = strconv.Itoa(page[len(page)-1]["id"].(int))
+		}
+		writeJSON(w, map[string]any{
+			"total": total, "count": len(page), "entries": page,
+			"next_cursor": next, "has_more": hasMore,
+		})
 		return
 	}
 	list, err := s.svc.DB().ListAuditTenantRange(limit, principal.TenantID, from, to)
@@ -1848,10 +2083,40 @@ func (s *Server) handleAdminTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.svc.DB() == nil {
+		if wantsPage(r) {
+			writeJSON(w, map[string]any{"total": 0, "count": 0, "tasks": []any{}, "next_cursor": "", "has_more": false})
+			return
+		}
 		writeJSON(w, []db.QueuedTask{})
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if wantsPage(r) {
+		limit = requestedPageLimit(r, 30)
+		tasks, err := s.svc.DB().ListTasksPageTenant(limit+1, r.URL.Query().Get("status"), r.URL.Query().Get("cursor"), principal.TenantID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		total, err := s.svc.DB().CountTasksTenant(r.URL.Query().Get("status"), principal.TenantID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for _, task := range tasks {
+			task.Options = nil
+		}
+		page, hasMore := pageWindow(tasks, limit)
+		next := ""
+		if hasMore {
+			next = page[len(page)-1].ID
+		}
+		writeJSON(w, map[string]any{
+			"total": total, "count": len(page), "tasks": page,
+			"next_cursor": next, "has_more": hasMore,
+		})
+		return
+	}
 	tasks, err := s.svc.DB().ListTasksTenant(limit, r.URL.Query().Get("status"), principal.TenantID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1914,7 +2179,34 @@ func (s *Server) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.svc.DB() == nil {
+		if wantsPage(r) {
+			writeJSON(w, map[string]any{"total": 0, "count": 0, "users": []any{}, "next_cursor": "", "has_more": false})
+			return
+		}
 		writeJSON(w, []db.User{})
+		return
+	}
+	if wantsPage(r) {
+		limit := requestedPageLimit(r, 25)
+		users, err := s.svc.DB().ListUsersPage(principal.TenantID, limit+1, r.URL.Query().Get("cursor"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		total, err := s.svc.DB().CountUsers(principal.TenantID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		page, hasMore := pageWindow(users, limit)
+		next := ""
+		if hasMore {
+			next = page[len(page)-1].ID
+		}
+		writeJSON(w, map[string]any{
+			"total": total, "count": len(page), "users": page,
+			"next_cursor": next, "has_more": hasMore,
+		})
 		return
 	}
 	users, err := s.svc.DB().ListUsers(principal.TenantID)
@@ -2069,11 +2361,38 @@ func (s *Server) handleAdminAlerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.svc.DB() == nil {
+		if wantsPage(r) {
+			writeJSON(w, map[string]any{"total": 0, "count": 0, "alerts": []any{}, "next_cursor": "", "has_more": false})
+			return
+		}
 		writeJSON(w, []db.Alert{})
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	activeOnly := r.URL.Query().Get("active") != "false"
+	if wantsPage(r) {
+		limit = requestedPageLimit(r, 30)
+		alerts, err := s.svc.DB().ListAlertsPage(activeOnly, limit+1, r.URL.Query().Get("cursor"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		total, err := s.svc.DB().CountAlerts(activeOnly)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		page, hasMore := pageWindow(alerts, limit)
+		next := ""
+		if hasMore {
+			next = page[len(page)-1].ID
+		}
+		writeJSON(w, map[string]any{
+			"total": total, "count": len(page), "alerts": page,
+			"next_cursor": next, "has_more": hasMore,
+		})
+		return
+	}
 	alerts, err := s.svc.DB().ListAlerts(activeOnly, limit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -2212,12 +2531,11 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = enc.Encode(v)
 }
 
-func managementBoundary(next http.Handler, cfg *config.Config) http.Handler {
-	adminPrefixes := []string{"/api/admin", "/api/jobs", "/api/export", "/api/v1/auth", "/debug", "/metrics"}
+func managementBoundary(next http.Handler, cfg *config.Config, am *auth.Manager) http.Handler {
 	publicAPI := map[string]bool{
-		"/api/health": true, "/api/ready": true, "/api/version": true, "/api/stats": true,
-		"/api/nodes": true, "/api/countries": true, "/api/sources": true, "/api/pools": true,
-		"/api/config": true, "/api/schedule": true, "/api/terms": true,
+		"/api/health": true, "/api/ready": true, "/api/version": true,
+		"/api/public/dashboard": true, "/api/public/dashboard/events": true,
+		"/api/v1/auth/login": true, "/api/v1/auth/logout": true, "/api/v1/auth/me": true,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := requestHost(r.Host)
@@ -2226,19 +2544,8 @@ func managementBoundary(next http.Handler, cfg *config.Config) http.Handler {
 		if prefix := strings.TrimRight(cfg.Publish.PathPrefix, "/"); prefix != "" {
 			subscription = subscription || path == prefix || strings.HasPrefix(path, prefix+"/")
 		}
-		management := false
-		for _, prefix := range adminPrefixes {
-			if path == prefix || strings.HasPrefix(path, prefix+"/") {
-				management = true
-				break
-			}
-		}
-		if strings.HasPrefix(path, "/api/") && !publicAPI[path] && !subscription {
-			management = true
-		}
-		if strings.HasPrefix(path, "/api/") && r.Method != http.MethodGet && !strings.HasPrefix(path, "/api/sub") {
-			management = true
-		}
+		management := !subscription && !publicAPI[path] &&
+			(strings.HasPrefix(path, "/api/") || path == "/metrics" || strings.HasPrefix(path, "/debug/"))
 		if subscription && cfg.Auth.PublicHost != "" && !strings.EqualFold(host, requestHost(cfg.Auth.PublicHost)) {
 			http.NotFound(w, r)
 			return
@@ -2252,6 +2559,11 @@ func managementBoundary(next http.Handler, cfg *config.Config) http.Handler {
 				middleware.ClientIP(r, cfg.Server.TrustedProxies), cfg.Auth.AdminCIDRs,
 			) {
 				http.Error(w, "management network denied", http.StatusForbidden)
+				return
+			}
+			principal, err := am.RequestPrincipal(r)
+			if err != nil || principal == nil || !principal.Authenticated {
+				http.Error(w, "authentication required", http.StatusUnauthorized)
 				return
 			}
 		}
@@ -2306,7 +2618,7 @@ func cors(next http.Handler, allowedOrigins []string) http.Handler {
 		}
 		if origin != "" {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Sub-Token, X-Admin-Token")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Sub-Token")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		}
 		if r.Method == http.MethodOptions {

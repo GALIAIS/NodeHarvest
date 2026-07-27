@@ -317,6 +317,75 @@ func (s *Store) ListTasksTenant(limit int, status, tenant string) ([]*QueuedTask
 	return out, rows.Err()
 }
 
+func (s *Store) ListTasksPageTenant(limit int, status, cursor, tenant string) ([]*QueuedTask, error) {
+	if limit <= 0 || limit > 101 {
+		limit = 31
+	}
+	query := `SELECT id,type,options_json,priority,status,attempts,max_attempts,available_at,
+ lease_until,worker_id,last_error,created_at,updated_at,started_at,ended_at FROM task_queue`
+	conditions, args := taskFilters(status, tenant)
+	if cursor != "" {
+		var created string
+		cursorQuery := `SELECT created_at FROM task_queue WHERE id=?`
+		cursorArgs := []any{cursor}
+		if tenant != "" {
+			cursorQuery += ` AND id IN (SELECT id FROM jobs WHERE tenant_id=?)`
+			cursorArgs = append(cursorArgs, tenantOrDefault(tenant))
+		}
+		if err := s.queryRow(cursorQuery, cursorArgs...).Scan(&created); err != nil {
+			return nil, err
+		}
+		conditions = append(conditions, `(created_at<? OR (created_at=? AND id<?))`)
+		args = append(args, created, created, cursor)
+	}
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
+	}
+	query += ` ORDER BY created_at DESC,id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*QueuedTask
+	for rows.Next() {
+		task, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, task)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CountTasksTenant(status, tenant string) (int, error) {
+	conditions, args := taskFilters(status, tenant)
+	query := `SELECT COUNT(*) FROM task_queue`
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
+	}
+	var count int
+	if err := s.queryRow(query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func taskFilters(status, tenant string) ([]string, []any) {
+	conditions := []string{}
+	args := []any{}
+	if status != "" {
+		conditions = append(conditions, `status=?`)
+		args = append(args, status)
+	}
+	if tenant != "" {
+		conditions = append(conditions, `id IN (SELECT id FROM jobs WHERE tenant_id=?)`)
+		args = append(args, tenantOrDefault(tenant))
+	}
+	return conditions, args
+}
+
 func (s *Store) QueueStats() (map[string]int64, error) {
 	rows, err := s.query(`SELECT status,COUNT(*) FROM task_queue GROUP BY status`)
 	if err != nil {

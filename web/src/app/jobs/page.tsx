@@ -14,7 +14,9 @@ import { api, errorMessage, isAuthError, type Job, type JobEvent, type QueuedTas
 import { AuthRequired } from "@/components/auth-required";
 import { JobActions } from "@/components/job-actions";
 import { PageHeader } from "@/components/page-header";
+import { PaginationControls } from "@/components/pagination-controls";
 import { useSession } from "@/components/session-provider";
+import { useLiveRefresh } from "@/components/live-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,18 +44,21 @@ export default function JobsPage() {
   // swaps the admin content for AuthRequired instead of a red error banner.
   const [authExpired, setAuthExpired] = useState(false);
   const [canceling, setCanceling] = useState("");
+  const [nextCursor, setNextCursor] = useState("");
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (cursor = "") => {
     if (!authenticated) return;
     try {
       const [jobPage, taskList, queueState] = await Promise.all([
-        api.jobs({ limit: 100 }),
-        api.tasks(),
+        api.jobs({ limit: 30, cursor: cursor || undefined }),
+        api.tasksPage({ limit: 50 }),
         api.queue(),
       ]);
       setJobs(jobPage.jobs);
-      setTasks(taskList);
+      setTasks(taskList.tasks);
       setQueue(queueState.tasks || {});
+      setNextCursor(jobPage.next_cursor || "");
       setSelectedID((current) => current || jobPage.jobs[0]?.id || "");
       setErr(null);
     } catch (cause) {
@@ -86,23 +91,40 @@ export default function JobsPage() {
 
   useEffect(() => {
     if (!authenticated || authExpired) return;
-    const initial = setTimeout(load, 0);
-    const timer = setInterval(load, 2500);
+    const initial = setTimeout(() => {
+      setCursorStack([]);
+      void load();
+    }, 0);
     return () => {
       clearTimeout(initial);
-      clearInterval(timer);
     };
   }, [load, authenticated, authExpired]);
 
   useEffect(() => {
     if (!authenticated || authExpired) return;
     const initial = setTimeout(loadEvents, 0);
-    const timer = setInterval(loadEvents, 1500);
     return () => {
       clearTimeout(initial);
-      clearInterval(timer);
     };
   }, [loadEvents, authenticated, authExpired]);
+
+  const currentCursor = cursorStack[cursorStack.length - 1] || "";
+  useLiveRefresh(() => {
+    void load(currentCursor);
+    void loadEvents();
+  }, authenticated && !authExpired);
+
+  function nextPage() {
+    if (!nextCursor) return;
+    setCursorStack((current) => [...current, nextCursor]);
+    void load(nextCursor);
+  }
+
+  function previousPage() {
+    const previous = cursorStack.slice(0, -1);
+    setCursorStack(previous);
+    void load(previous[previous.length - 1] || "");
+  }
 
   const taskByID = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const selected = jobs.find((job) => job.id === selectedID);
@@ -112,7 +134,7 @@ export default function JobsPage() {
     setErr(null);
     try {
       await api.cancelTask(id);
-      await load();
+      await load(currentCursor);
     } catch (cause) {
       if (isAuthError(cause)) {
         setAuthExpired(true);
@@ -133,10 +155,10 @@ export default function JobsPage() {
       <PageHeader
         eyebrow="Durable workflow"
         title="任务与事件中心"
-        description="任务写入持久化优先级队列，由独立 Worker 租约执行；事件时间线持续轮询，可追踪重试、失败与取消。"
+        description="任务写入持久化优先级队列，由独立 Worker 租约执行；事件时间线通过 SSE 实时刷新，可追踪重试、失败与取消。"
         actions={
           <Hint content="登录后可用" disabled={needsLogin}>
-            <Button variant="secondary" size="sm" onClick={load} disabled={needsLogin}>
+            <Button variant="secondary" size="sm" onClick={() => { void load(currentCursor); }} disabled={needsLogin}>
               <RefreshCw className="size-3.5" /> 刷新
             </Button>
           </Hint>
@@ -147,7 +169,7 @@ export default function JobsPage() {
         {needsLogin ? (
           <AuthRequired
             title="任务中心需要登录"
-            description="任务队列、事件时间线与任务操作都属于管理面。公开的节点、采集源与订阅数据无需登录即可查看。"
+            description="任务队列、事件时间线与任务操作都属于管理面；未登录时仅可查看仪表盘。"
           />
         ) : (
           <>
@@ -172,7 +194,7 @@ export default function JobsPage() {
             <CardDescription>一键全流程包含采集、质量探测、Geo/ASN、真实协议抽样、AI 探测与发布</CardDescription>
           </CardHeader>
           <CardContent>
-            <JobActions onStarted={(id) => { setSelectedID(id); load(); }} />
+            <JobActions onStarted={(id) => { setSelectedID(id); void load(); }} />
           </CardContent>
         </Card>
 
@@ -224,6 +246,13 @@ export default function JobsPage() {
             {jobs.length === 0 && (
               <Card><CardEmpty>还没有任务记录</CardEmpty></Card>
             )}
+            <PaginationControls
+              page={cursorStack.length + 1}
+              count={jobs.length}
+              hasNext={Boolean(nextCursor)}
+              onPrevious={previousPage}
+              onNext={nextPage}
+            />
           </div>
 
           <Card className="h-fit xl:sticky xl:top-4">

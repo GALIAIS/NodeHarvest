@@ -28,9 +28,6 @@ import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-// `admin: true` marks views whose data comes from /api/admin/* or /api/jobs,
-// which return 401 to anonymous visitors — the nav shows a lock so the
-// restriction is visible before navigating rather than after.
 const groups = [
   {
     label: "Observe",
@@ -38,7 +35,7 @@ const groups = [
       { href: "/", label: "仪表盘", icon: LayoutDashboard },
       { href: "/nodes", label: "节点库", icon: Network },
       { href: "/sources", label: "采集源", icon: Server },
-      { href: "/jobs", label: "任务中心", icon: Activity, admin: true },
+      { href: "/jobs", label: "任务中心", icon: Activity },
       { href: "/ai", label: "AI 可达", icon: Bot },
       { href: "/export", label: "订阅池", icon: Download },
     ],
@@ -46,10 +43,10 @@ const groups = [
   {
     label: "Govern",
     items: [
-      { href: "/alerts", label: "异常告警", icon: BellRing, admin: true },
-      { href: "/tokens", label: "Token", icon: KeyRound, admin: true },
-      { href: "/users", label: "用户", icon: Users, admin: true },
-      { href: "/audit", label: "审计", icon: FileClock, admin: true },
+      { href: "/alerts", label: "异常告警", icon: BellRing },
+      { href: "/tokens", label: "Token", icon: KeyRound },
+      { href: "/users", label: "用户", icon: Users },
+      { href: "/audit", label: "审计", icon: FileClock },
       { href: "/system", label: "系统", icon: Settings2 },
       { href: "/terms", label: "合规", icon: Scale },
     ],
@@ -96,11 +93,14 @@ function NavItem({
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { session, authenticated, loading } = useSession();
+  const { session, authenticated } = useSession();
 
   if (pathname === "/login") return null;
 
   const active = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
+  const visibleGroups = authenticated
+    ? groups
+    : [{ label: "Observe", items: [groups[0].items[0]] }];
 
   return (
     <>
@@ -123,7 +123,7 @@ export function Sidebar() {
         </div>
 
         <nav className="flex flex-1 flex-col gap-5 overflow-y-auto py-4">
-          {groups.map((group) => (
+          {visibleGroups.map((group) => (
             <div key={group.label}>
               <div className="mb-2 flex items-center gap-2 px-3">
                 <span className="font-mono text-[9px] uppercase tracking-[0.24em] text-muted-foreground">
@@ -132,12 +132,11 @@ export function Sidebar() {
                 <Separator className="flex-1" />
               </div>
               <div>
-                {group.items.map(({ admin, ...item }) => (
+                {group.items.map((item) => (
                   <NavItem
                     key={item.href}
                     {...item}
                     active={active(item.href)}
-                    locked={Boolean(admin) && !authenticated && !loading}
                   />
                 ))}
               </div>
@@ -163,10 +162,6 @@ export function Sidebar() {
                     size="icon-sm"
                     aria-label="退出登录"
                     onClick={() => {
-                      // A full navigation remounts the provider, so refreshing
-                      // the session here first would only add a round trip.
-                      // api.logout() clears the tab-local admin token even if
-                      // the request itself fails.
                       void api.logout().finally(() => window.location.assign("/login"));
                     }}
                     className="hover:text-destructive"
@@ -198,12 +193,14 @@ export function Sidebar() {
           <Link href="/" className="flex items-center gap-2 font-display text-xs font-semibold tracking-[0.1em] text-foreground">
             <Radio className="size-4 text-primary" /> NODEHARVEST
           </Link>
-          <Link href="/login" aria-label="管理登录" className="text-muted-foreground">
-            <ShieldCheck className="size-4" />
-          </Link>
+          {!authenticated && (
+            <Link href="/login" aria-label="管理登录" className="text-muted-foreground">
+              <ShieldCheck className="size-4" />
+            </Link>
+          )}
         </div>
         <nav className="flex gap-1 overflow-x-auto border-t border-border px-2">
-          {groups.flatMap((group) =>
+          {visibleGroups.flatMap((group) =>
             group.items.map((item) => (
               <NavItem
                 key={item.href}

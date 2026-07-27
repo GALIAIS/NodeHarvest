@@ -52,30 +52,16 @@ type QueueConfig struct {
 }
 
 type AuthConfig struct {
-	LocalEnabled      bool       `yaml:"local_enabled"`
-	BootstrapUser     string     `yaml:"bootstrap_user"`
-	BootstrapTenant   string     `yaml:"bootstrap_tenant"`
-	BootstrapHash     string     `yaml:"bootstrap_password_hash"`
-	SessionSecret     string     `yaml:"session_secret"`
-	SessionTTLHours   int        `yaml:"session_ttl_hours"`
-	SessionCookieName string     `yaml:"session_cookie_name"`
-	DefaultRole       string     `yaml:"default_role"`
-	RoleClaim         string     `yaml:"role_claim"`
-	TenantClaim       string     `yaml:"tenant_claim"`
-	AdminHost         string     `yaml:"admin_host"`
-	PublicHost        string     `yaml:"public_host"`
-	AdminCIDRs        []string   `yaml:"admin_cidrs"`
-	OIDC              OIDCConfig `yaml:"oidc"`
-}
-
-type OIDCConfig struct {
-	Enabled             bool     `yaml:"enabled"`
-	IssuerURL           string   `yaml:"issuer_url"`
-	ClientID            string   `yaml:"client_id"`
-	ClientSecret        string   `yaml:"client_secret"`
-	RedirectURL         string   `yaml:"redirect_url"`
-	Scopes              []string `yaml:"scopes"`
-	AllowedEmailDomains []string `yaml:"allowed_email_domains"`
+	LocalEnabled      bool     `yaml:"local_enabled"`
+	BootstrapUser     string   `yaml:"bootstrap_user"`
+	BootstrapTenant   string   `yaml:"bootstrap_tenant"`
+	BootstrapHash     string   `yaml:"bootstrap_password_hash"`
+	SessionSecret     string   `yaml:"session_secret"`
+	SessionTTLHours   int      `yaml:"session_ttl_hours"`
+	SessionCookieName string   `yaml:"session_cookie_name"`
+	AdminHost         string   `yaml:"admin_host"`
+	PublicHost        string   `yaml:"public_host"`
+	AdminCIDRs        []string `yaml:"admin_cidrs"`
 }
 
 type GovernanceConfig struct {
@@ -183,18 +169,6 @@ func (c *Config) normalizeEnterprise() {
 	if c.Auth.SessionCookieName == "" {
 		c.Auth.SessionCookieName = "nh_session"
 	}
-	if c.Auth.DefaultRole == "" {
-		c.Auth.DefaultRole = "viewer"
-	}
-	if c.Auth.RoleClaim == "" {
-		c.Auth.RoleClaim = "role"
-	}
-	if c.Auth.TenantClaim == "" {
-		c.Auth.TenantClaim = "tenant"
-	}
-	if len(c.Auth.OIDC.Scopes) == 0 {
-		c.Auth.OIDC.Scopes = []string{"openid", "profile", "email"}
-	}
 	if c.Governance.DisableAfterFailures <= 0 {
 		c.Governance.DisableAfterFailures = 5
 	}
@@ -260,8 +234,8 @@ func (c *Config) normalizeEnterprise() {
 	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH")); v != "" {
 		c.Auth.BootstrapHash = v
 	}
-	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_OIDC_CLIENT_SECRET")); v != "" {
-		c.Auth.OIDC.ClientSecret = v
+	if v, ok := envBool("NODE_HARVEST_LOCAL_AUTH"); ok {
+		c.Auth.LocalEnabled = v
 	}
 	if v := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")); v != "" {
 		c.Observability.OTLPEndpoint = v
@@ -311,11 +285,6 @@ func (c *Config) validateEnterprise() error {
 	if c.Queue.Enabled && !c.Database.Enabled {
 		return fmt.Errorf("queue.enabled requires database.enabled")
 	}
-	for _, role := range []string{c.Auth.DefaultRole} {
-		if role != "viewer" && role != "operator" && role != "admin" {
-			return fmt.Errorf("auth.default_role must be viewer, operator, or admin")
-		}
-	}
 	if c.Auth.LocalEnabled && (c.Auth.BootstrapUser == "" || c.Auth.BootstrapHash == "") {
 		return fmt.Errorf("local auth requires bootstrap_user and bootstrap_password_hash")
 	}
@@ -337,14 +306,8 @@ func (c *Config) validateEnterprise() error {
 			}
 		}
 	}
-	if (c.Auth.LocalEnabled || c.Auth.OIDC.Enabled) && len(c.Auth.SessionSecret) < 32 {
+	if c.Auth.LocalEnabled && len(c.Auth.SessionSecret) < 32 {
 		return fmt.Errorf("auth.session_secret must contain at least 32 characters")
-	}
-	if c.Auth.OIDC.Enabled {
-		if c.Auth.OIDC.IssuerURL == "" || c.Auth.OIDC.ClientID == "" ||
-			c.Auth.OIDC.ClientSecret == "" || c.Auth.OIDC.RedirectURL == "" {
-			return fmt.Errorf("OIDC requires issuer_url, client_id, client_secret, and redirect_url")
-		}
 	}
 	if c.Governance.AlertWebhookURL != "" {
 		u, err := url.Parse(c.Governance.AlertWebhookURL)

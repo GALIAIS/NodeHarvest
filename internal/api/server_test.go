@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -17,25 +18,53 @@ import (
 	"github.com/GALIAIS/NodeHarvest/internal/store"
 )
 
+func issueTestSession(t *testing.T, role auth.Role) (*auth.Manager, string) {
+	t.Helper()
+	manager := &auth.Manager{
+		SessionSecret: strings.Repeat("s", 32), SessionTTL: time.Hour, CookieName: "nh_session",
+	}
+	session, err := manager.IssueSession(&auth.Principal{
+		Kind: "local", Name: string(role), Subject: string(role), Role: role,
+		TenantID: "default", Authenticated: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manager, session
+}
+
+func withSession(req *http.Request, manager *auth.Manager, session string) {
+	req.AddCookie(&http.Cookie{Name: manager.CookieName, Value: session})
+}
+
+type cancellingSSERecorder struct {
+	*httptest.ResponseRecorder
+	cancel context.CancelFunc
+}
+
+func (w *cancellingSSERecorder) Flush() {
+	w.cancel()
+}
+
 func TestMutationAuthAndNodeCursor(t *testing.T) {
 	cfg := config.Default()
 	cfg.Geo.Enabled = false
 	cfg.Publish.PreRender = false
 	cfg.Export.Dir = t.TempDir()
-	cfg.Security.AdminToken = "admin-secret"
 	st, err := store.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := st.ReplaceNodes([]*model.Node{
-		{Protocol: model.ProtoVLESS, Server: "a.example", Port: 443, UUID: "a", RawURI: "vless://a@a.example:443"},
+		{Protocol: model.ProtoVLESS, Server: "a.example", Port: 443, UUID: "a", RawURI: "vless://a@a.example:443", Alive: true, Score: 90},
 		{Protocol: model.ProtoVLESS, Server: "b.example", Port: 443, UUID: "b"},
 		{Protocol: model.ProtoVLESS, Server: "c.example", Port: 443, UUID: "c"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	svc := service.New(cfg, st)
-	h := New(svc, nil, &auth.Manager{AdminToken: cfg.Security.AdminToken}).Handler()
+	manager, adminSession := issueTestSession(t, auth.RoleAdmin)
+	h := New(svc, nil, manager).Handler()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/jobs/fetch", nil)
 	res := httptest.NewRecorder()
@@ -47,11 +76,18 @@ func TestMutationAuthAndNodeCursor(t *testing.T) {
 	req.Header.Set("X-Admin-Token", "admin-secret")
 	res = httptest.NewRecorder()
 	h.ServeHTTP(res, req)
-	if res.Code != http.StatusOK {
-		t.Fatalf("authenticated mutation status=%d", res.Code)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("admin token was accepted status=%d", res.Code)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/jobs/cancel", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	res = httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("bearer token was accepted status=%d", res.Code)
 	}
 	req = httptest.NewRequest(http.MethodPost, "/api/jobs/fetch", strings.NewReader(`{} {}`))
-	req.Header.Set("X-Admin-Token", "admin-secret")
+	withSession(req, manager, adminSession)
 	res = httptest.NewRecorder()
 	h.ServeHTTP(res, req)
 	if res.Code != http.StatusBadRequest {
@@ -59,6 +95,36 @@ func TestMutationAuthAndNodeCursor(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/nodes?limit=2", nil)
+	res = httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous nodes status=%d", res.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/public/dashboard", nil)
+	res = httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	var dashboard struct {
+		Top []*model.Node `json:"top"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &dashboard); err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range dashboard.Top {
+		if node.RawURI != "" || node.UUID != "" || node.Fingerprint != "" {
+			t.Fatalf("public dashboard leaked credentials: %+v", node)
+		}
+	}
+
+	viewerSession, err := manager.IssueSession(&auth.Principal{
+		Kind: "local", Name: "viewer", Subject: "viewer", Role: auth.RoleViewer,
+		TenantID: "default", Authenticated: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/nodes?limit=2", nil)
+	withSession(req, manager, viewerSession)
 	res = httptest.NewRecorder()
 	h.ServeHTTP(res, req)
 	var page struct {
@@ -79,6 +145,7 @@ func TestMutationAuthAndNodeCursor(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/nodes?limit=2&cursor="+page.NextCursor, nil)
+	withSession(req, manager, viewerSession)
 	res = httptest.NewRecorder()
 	h.ServeHTTP(res, req)
 	if err := json.Unmarshal(res.Body.Bytes(), &page); err != nil {
@@ -96,10 +163,130 @@ func TestMutationAuthAndNodeCursor(t *testing.T) {
 	}
 }
 
+func TestManagementPaginationEndpoints(t *testing.T) {
+	cfg := config.Default()
+	cfg.Geo.Enabled = false
+	cfg.Publish.PreRender = false
+	cfg.Export.Dir = t.TempDir()
+	database, err := db.Open(filepath.Join(t.TempDir(), "management-pages.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	now := time.Now().Add(-time.Hour)
+	for i, id := range []string{"a", "b", "c"} {
+		created := now.Add(time.Duration(i) * time.Minute)
+		if err := database.InsertToken(&db.Token{
+			ID: "token-" + id, Name: id, TokenHash: "hash-" + id, TokenPrefix: "prefix-" + id,
+			Enabled: true, TenantID: "default", CreatedAt: created.Format(time.RFC3339),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.InsertUser(&db.User{
+			ID: "user-" + id, Username: "user-" + id, PasswordHash: "hash", Role: "viewer", Enabled: true,
+			TenantID: "default", CreatedAt: created.Format(time.RFC3339),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.Audit("default:admin", "test", id); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.SaveJob(&model.Job{
+			ID: "task-" + id, Type: "fetch", Status: model.JobPending, TenantID: "default", CreatedAt: created, UpdatedAt: created,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.EnqueueTask(&db.QueuedTask{ID: "task-" + id, Type: "fetch"}, 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.RaiseAlert("alert-"+id, "warning", id, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	manager, session := issueTestSession(t, auth.RoleAdmin)
+	h := New(service.NewWithOptions(cfg, store.NewMemory(), service.Options{DB: database}), nil, manager).Handler()
+	assertPage := func(path string) {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, path+"?page=1&limit=2", nil)
+		withSession(request, manager, session)
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("first %s status=%d body=%s", path, response.Code, response.Body)
+		}
+		var first struct {
+			Total      int    `json:"total"`
+			Count      int    `json:"count"`
+			NextCursor string `json:"next_cursor"`
+			HasMore    bool   `json:"has_more"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &first); err != nil {
+			t.Fatal(err)
+		}
+		if first.Total != 3 || first.Count != 2 || !first.HasMore || first.NextCursor == "" {
+			t.Fatalf("first %s page=%+v", path, first)
+		}
+
+		request = httptest.NewRequest(http.MethodGet, path+"?page=1&limit=2&cursor="+first.NextCursor, nil)
+		withSession(request, manager, session)
+		response = httptest.NewRecorder()
+		h.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("second %s status=%d body=%s", path, response.Code, response.Body)
+		}
+		var second struct {
+			Total   int  `json:"total"`
+			Count   int  `json:"count"`
+			HasMore bool `json:"has_more"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &second); err != nil {
+			t.Fatal(err)
+		}
+		if second.Total != 3 || second.Count != 1 || second.HasMore {
+			t.Fatalf("second %s page=%+v", path, second)
+		}
+	}
+
+	for _, path := range []string{
+		"/api/admin/tokens", "/api/admin/users", "/api/admin/audit", "/api/admin/tasks", "/api/admin/alerts",
+	} {
+		assertPage(path)
+	}
+}
+
 func TestRedactSourceURL(t *testing.T) {
 	got := redactSourceURL("https://user:pass@example.test/sub?token=secret#fragment")
 	if got != "https://example.test/sub" {
 		t.Fatalf("redacted URL=%q", got)
+	}
+}
+
+func TestDashboardEventsArePublicAndStreamed(t *testing.T) {
+	cfg := config.Default()
+	cfg.Geo.Enabled = false
+	cfg.Publish.PreRender = false
+	cfg.Export.Dir = t.TempDir()
+	handler := New(service.New(cfg, store.NewMemory()), nil, &auth.Manager{}).Handler()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/public/dashboard/events", nil).WithContext(ctx)
+	res := &cancellingSSERecorder{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
+	handler.ServeHTTP(res, req)
+	if got := res.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("content-type=%q", got)
+	}
+	if !strings.Contains(res.Body.String(), "event: dashboard") {
+		t.Fatalf("dashboard event missing: %q", res.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/events", nil)
+	denied := httptest.NewRecorder()
+	handler.ServeHTTP(denied, req)
+	if denied.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous management event stream status=%d", denied.Code)
 	}
 }
 
@@ -120,8 +307,10 @@ func TestAuditBoundsAndSourceSortValidation(t *testing.T) {
 	cfg.Geo.Enabled = false
 	cfg.Publish.PreRender = false
 	cfg.Export.Dir = t.TempDir()
-	handler := New(service.New(cfg, store.NewMemory()), nil, &auth.Manager{}).Handler()
+	manager, session := issueTestSession(t, auth.RoleViewer)
+	handler := New(service.New(cfg, store.NewMemory()), nil, manager).Handler()
 	req := httptest.NewRequest(http.MethodGet, "/api/sources?sort=unknown", nil)
+	withSession(req, manager, session)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusBadRequest {
@@ -206,14 +395,14 @@ func TestManagementRBACAndHostBoundary(t *testing.T) {
 	manager := &auth.Manager{
 		SessionSecret: strings.Repeat("k", 32), SessionTTL: time.Hour, CookieName: "nh_session",
 	}
-	viewerToken, err := manager.IssueSession(&auth.Principal{
+	viewerSession, err := manager.IssueSession(&auth.Principal{
 		Kind: "local", Name: "viewer", Subject: "viewer", Role: auth.RoleViewer,
 		TenantID: "default", Authenticated: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	operatorToken, err := manager.IssueSession(&auth.Principal{
+	operatorSession, err := manager.IssueSession(&auth.Principal{
 		Kind: "local", Name: "operator", Subject: "operator", Role: auth.RoleOperator,
 		TenantID: "default", Authenticated: true,
 	})
@@ -231,13 +420,13 @@ func TestManagementRBACAndHostBoundary(t *testing.T) {
 		h.ServeHTTP(res, req)
 		return res
 	}
-	if res := request("admin.example", viewerToken); res.Code != http.StatusForbidden {
+	if res := request("admin.example", viewerSession); res.Code != http.StatusForbidden {
 		t.Fatalf("viewer mutation status=%d body=%s", res.Code, res.Body)
 	}
-	if res := request("public.example", operatorToken); res.Code != http.StatusNotFound {
+	if res := request("public.example", operatorSession); res.Code != http.StatusNotFound {
 		t.Fatalf("public-host management status=%d body=%s", res.Code, res.Body)
 	}
-	if res := request("admin.example", operatorToken); res.Code != http.StatusOK {
+	if res := request("admin.example", operatorSession); res.Code != http.StatusOK {
 		t.Fatalf("operator mutation status=%d body=%s", res.Code, res.Body)
 	}
 }
@@ -247,7 +436,6 @@ func TestRuntimeConfigIsConfirmedPersistedAndReloaded(t *testing.T) {
 	cfg.Geo.Enabled = false
 	cfg.Publish.PreRender = false
 	cfg.Export.Dir = t.TempDir()
-	cfg.Security.AdminToken = "admin-secret"
 	database, err := db.Open(filepath.Join(t.TempDir(), "runtime.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -261,12 +449,13 @@ func TestRuntimeConfigIsConfirmedPersistedAndReloaded(t *testing.T) {
 		return st
 	}
 	svc := service.NewWithOptions(cfg, newStore(), service.Options{DB: database})
-	handler := New(svc, nil, &auth.Manager{AdminToken: cfg.Security.AdminToken}).Handler()
+	manager, session := issueTestSession(t, auth.RoleAdmin)
+	handler := New(svc, nil, manager).Handler()
 
 	update := func(body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPatch, "/api/admin/config", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Admin-Token", cfg.Security.AdminToken)
+		withSession(req, manager, session)
 		res := httptest.NewRecorder()
 		handler.ServeHTTP(res, req)
 		return res
@@ -281,7 +470,7 @@ func TestRuntimeConfigIsConfirmedPersistedAndReloaded(t *testing.T) {
 		t.Fatalf("runtime config not applied: %+v", svc.Config().Publish)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/config/versions", nil)
-	req.Header.Set("X-Admin-Token", cfg.Security.AdminToken)
+	withSession(req, manager, session)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
 	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"checksum"`) {

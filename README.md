@@ -12,7 +12,7 @@
 - 可解释评分 v2：延迟、成功率、7 日稳定性、TLS、HTTP、吞吐量。
 - SQLite 零服务运行；生产可切 PostgreSQL、Redis、MinIO/S3。
 - 持久化优先级队列、租约、重试、死信、取消、独立 Worker 和事件时间线。
-- 本地 bcrypt、OIDC、签名会话、viewer/operator/admin RBAC、多租户隔离。
+- 本地 bcrypt 账户、签名会话、viewer/operator/admin RBAC、多租户隔离。
 - bcrypt 订阅 Token、国家/协议 ACL、RPS、日请求配额、流量统计、到期和吊销。
 - global-hq、verified、streaming、AI-friendly、low-latency 及国家分区订阅。
 - Prometheus、OpenTelemetry、Jaeger、结构化 request/job/trace ID、异常生命周期和签名 Webhook。
@@ -26,7 +26,7 @@
 ```text
 Public /sub ── Caddy/WAF ── API replicas ── Redis cache/lock
                                   │
-Admin console ── OIDC/RBAC ──────┤
+Admin console ── local account/RBAC ─┤
                                   ├── PostgreSQL
 Scheduler/API ── durable queue ───┤
                                   ├── Worker replicas ── sing-box/xray
@@ -69,12 +69,14 @@ npm run dev
 打开 `http://127.0.0.1:3000`。开发模式通过 `API_ORIGIN` 将 `/api/*`
 转发至 Go 服务；生产镜像使用静态导出并由 Go 服务同源托管。
 
-默认配置启用 SQLite 和持久化队列。管理操作可先使用
-`NODE_HARVEST_ADMIN_TOKEN`；生产应配置本地账户或 OIDC：
+默认配置启用 SQLite 和持久化队列。控制台不接受 Token 登录：管理面仅接受
+本地账号密码，会话保存在 HttpOnly Cookie；订阅 Token 只用于 `/sub` 节点订阅。
+先生成 bcrypt hash（例如 `htpasswd -nbBC 12 admin '你的长密码' | cut -d: -f2`），再启动：
 
 ```bash
-export NODE_HARVEST_ADMIN_TOKEN="replace-with-random-secret"
 export NODE_HARVEST_TOKEN="replace-with-subscription-secret"
+export NODE_HARVEST_LOCAL_AUTH=1
+export NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH='$2y$...'
 export NODE_HARVEST_SESSION_SECRET="at-least-32-random-characters"
 go run ./cmd/server -addr :8080 -config configs/config.yaml
 ```
@@ -101,7 +103,8 @@ STATIC_EXPORT=1 npm run build
 docker pull ghcr.io/galiais/nodeharvest:edge
 docker run --rm -p 8080:8080 \
   -e NODE_HARVEST_TOKEN="replace-with-subscription-secret" \
-  -e NODE_HARVEST_ADMIN_TOKEN="replace-with-admin-secret" \
+  -e NODE_HARVEST_LOCAL_AUTH=1 \
+  -e NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH="$NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH" \
   -e NODE_HARVEST_SESSION_SECRET="at-least-32-random-characters" \
   ghcr.io/galiais/nodeharvest:edge
 ```
@@ -116,7 +119,7 @@ Prometheus、Jaeger、OTel Collector、node-exporter 和 blackbox-exporter。
 ```bash
 export POSTGRES_PASSWORD="..."
 export NODE_HARVEST_TOKEN="..."
-export NODE_HARVEST_ADMIN_TOKEN="..."
+export NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH="..."
 export NODE_HARVEST_SESSION_SECRET="..."
 export OBJECT_STORE_ACCESS_KEY="..."
 export OBJECT_STORE_SECRET_KEY="..."
@@ -126,7 +129,8 @@ export ADMIN_DOMAIN="admin.example.com"
 docker compose -f deploy/compose.prod.yml up -d
 ```
 
-公网域名仅暴露 `/sub*` 和探针；管理域名承载控制台及管理 API。详细步骤见
+未登录浏览器仅可查看仪表盘；管理域名承载登录后的控制台及管理 API，`/sub*` 只接受
+订阅 Token。详细步骤见
 [deploy/DEPLOY.md](deploy/DEPLOY.md)。
 
 ## 订阅

@@ -132,8 +132,6 @@ jobs:
         run: |
           docker run -d --name nodeharvest-smoke -p 127.0.0.1:18080:8080 \
             -e NODE_HARVEST_TOKEN="$SUB_TOKEN" \
-            -e NODE_HARVEST_ADMIN_TOKEN=ci-admin-token-change-me \
-            -e NODE_HARVEST_SESSION_SECRET=ci-session-secret-change-me-32bytes \
             -e NODE_HARVEST_SCHEDULE=0 \
             nodeharvest:ci
           trap 'docker rm -f nodeharvest-smoke >/dev/null 2>&1 || true' EXIT

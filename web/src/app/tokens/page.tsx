@@ -5,7 +5,9 @@ import { AlertTriangle, Ban, Check, Copy, KeyRound, Plus, Power, Trash2 } from "
 import { api, errorMessage, isAuthError, type TokenRecord } from "@/lib/api";
 import { AuthRequired } from "@/components/auth-required";
 import { PageHeader } from "@/components/page-header";
+import { PaginationControls } from "@/components/pagination-controls";
 import { useSession } from "@/components/session-provider";
+import { useLiveRefresh } from "@/components/live-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,12 +50,18 @@ export default function TokensPage() {
   // 这样退出动画期间文案不会闪空
   const [deleteTarget, setDeleteTarget] = useState<TokenRecord | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [nextCursor, setNextCursor] = useState("");
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (cursor = "") => {
     // 管理面接口,匿名访客不发请求,避免无意义的 401
     if (!authenticated) return;
     try {
-      setTokens(await api.tokens());
+      const page = await api.tokensPage({ cursor: cursor || undefined });
+      setTokens(page.tokens);
+      setTotal(page.total ?? 0);
+      setNextCursor(page.next_cursor || "");
       setError("");
       setAuthError(false);
     } catch (cause) {
@@ -63,9 +71,27 @@ export default function TokensPage() {
   }, [authenticated]);
 
   useEffect(() => {
-    const initial = setTimeout(load, 0);
+    const initial = setTimeout(() => {
+      setCursorStack([]);
+      void load();
+    }, 0);
     return () => clearTimeout(initial);
   }, [load]);
+
+  const currentCursor = cursorStack[cursorStack.length - 1] || "";
+  useLiveRefresh(() => load(currentCursor), authenticated && !authError);
+
+  function nextPage() {
+    if (!nextCursor) return;
+    setCursorStack((current) => [...current, nextCursor]);
+    void load(nextCursor);
+  }
+
+  function previousPage() {
+    const previous = cursorStack.slice(0, -1);
+    setCursorStack(previous);
+    void load(previous[previous.length - 1] || "");
+  }
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -83,7 +109,7 @@ export default function TokensPage() {
       });
       setCreated(token);
       setForm((current) => ({ ...current, name: "", note: "" }));
-      await load();
+      await load(currentCursor);
     } catch (cause) {
       if (isAuthError(cause)) setAuthError(true);
       else setError(errorMessage(cause, "创建失败"));
@@ -96,7 +122,7 @@ export default function TokensPage() {
     setBusy(token.id);
     try {
       await api.setTokenEnabled(token.id, !token.enabled);
-      await load();
+      await load(currentCursor);
     } catch (cause) {
       if (isAuthError(cause)) setAuthError(true);
       else setError(errorMessage(cause, "操作失败"));
@@ -109,7 +135,7 @@ export default function TokensPage() {
     setBusy(token.id);
     try {
       await api.deleteToken(token.id);
-      await load();
+      await load(currentCursor);
     } catch (cause) {
       if (isAuthError(cause)) setAuthError(true);
       else setError(errorMessage(cause, "删除失败"));
@@ -277,6 +303,15 @@ export default function TokensPage() {
               );
             })}
             {tokens.length === 0 && <Card><CardEmpty>暂无数据库 Token</CardEmpty></Card>}
+            <PaginationControls
+              page={cursorStack.length + 1}
+              total={total}
+              count={tokens.length}
+              hasNext={Boolean(nextCursor)}
+              onPrevious={previousPage}
+              onNext={nextPage}
+              disabled={Boolean(busy)}
+            />
           </div>
         </div>
         )}

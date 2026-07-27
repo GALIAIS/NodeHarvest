@@ -5,7 +5,9 @@ import { AlertTriangle, Download, FileClock, RefreshCw } from "lucide-react";
 import { api, errorMessage, isAuthError, type AuditEntry } from "@/lib/api";
 import { AuthRequired } from "@/components/auth-required";
 import { PageHeader } from "@/components/page-header";
+import { PaginationControls } from "@/components/pagination-controls";
 import { useSession } from "@/components/session-provider";
+import { useLiveRefresh } from "@/components/live-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,12 +33,22 @@ export default function AuditPage() {
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [needsLogin, setNeedsLogin] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [nextCursor, setNextCursor] = useState("");
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (cursor = "") => {
     // /api/admin/audit rejects anonymous callers — don't even ask.
     if (!authenticated) return;
     try {
-      setEntries(await api.audit({ from: from || undefined, to: to || undefined }));
+      const page = await api.auditPage({
+        from: from || undefined,
+        to: to || undefined,
+        cursor: cursor || undefined,
+      });
+      setEntries(page.entries);
+      setTotal(page.total ?? 0);
+      setNextCursor(page.next_cursor || "");
       setError("");
       setNeedsLogin(false);
     } catch (cause) {
@@ -50,9 +62,27 @@ export default function AuditPage() {
   }, [authenticated, from, to]);
 
   useEffect(() => {
-    const initial = setTimeout(load, 0);
+    const initial = setTimeout(() => {
+      setCursorStack([]);
+      void load();
+    }, 0);
     return () => clearTimeout(initial);
   }, [load]);
+
+  const currentCursor = cursorStack[cursorStack.length - 1] || "";
+  useLiveRefresh(() => load(currentCursor), authenticated && !needsLogin);
+
+  function nextPage() {
+    if (!nextCursor) return;
+    setCursorStack((current) => [...current, nextCursor]);
+    void load(nextCursor);
+  }
+
+  function previousPage() {
+    const previous = cursorStack.slice(0, -1);
+    setCursorStack(previous);
+    void load(previous[previous.length - 1] || "");
+  }
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -86,7 +116,7 @@ export default function AuditPage() {
             <Button
               size="sm"
               variant="secondary"
-              onClick={load}
+              onClick={() => { void load(currentCursor); }}
               disabled={!authenticated}
               title={!authenticated ? "登录后可刷新审计日志" : undefined}
             >
@@ -193,6 +223,14 @@ export default function AuditPage() {
                 </Table>
               </CardContent>
             </Card>
+            <PaginationControls
+              page={cursorStack.length + 1}
+              total={total}
+              count={visible.length}
+              hasNext={Boolean(nextCursor)}
+              onPrevious={previousPage}
+              onNext={nextPage}
+            />
           </>
         )}
       </div>

@@ -5,7 +5,9 @@ import { AlertOctagon, AlertTriangle, CheckCheck, RefreshCw, ShieldCheck } from 
 import { api, errorMessage, isForbidden, isUnauthenticated, type AlertRecord } from "@/lib/api";
 import { AuthRequired } from "@/components/auth-required";
 import { PageHeader } from "@/components/page-header";
+import { PaginationControls } from "@/components/pagination-controls";
 import { useSession } from "@/components/session-provider";
+import { useLiveRefresh } from "@/components/live-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,12 +24,18 @@ export default function AlertsPage() {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [authBlocked, setAuthBlocked] = useState<null | "anonymous" | "forbidden">(null);
+  const [total, setTotal] = useState(0);
+  const [nextCursor, setNextCursor] = useState("");
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (cursor = "") => {
     // The alerts feed is admin-only; anonymous requests would just 401.
     if (!authenticated) return;
     try {
-      setAlerts(await api.alerts(activeOnly));
+      const page = await api.alertsPage({ active: activeOnly, cursor: cursor || undefined });
+      setAlerts(page.alerts);
+      setTotal(page.total ?? 0);
+      setNextCursor(page.next_cursor || "");
       setError("");
       setAuthBlocked(null);
     } catch (cause) {
@@ -44,21 +52,36 @@ export default function AlertsPage() {
   }, [activeOnly, authenticated]);
 
   useEffect(() => {
-    // Stop polling once an auth failure surfaced, or it would retry forever.
     if (!authenticated || authBlocked) return;
-    const initial = setTimeout(load, 0);
-    const timer = setInterval(load, 10000);
+    const initial = setTimeout(() => {
+      setCursorStack([]);
+      void load();
+    }, 0);
     return () => {
       clearTimeout(initial);
-      clearInterval(timer);
     };
   }, [load, authenticated, authBlocked]);
+
+  const currentCursor = cursorStack[cursorStack.length - 1] || "";
+  useLiveRefresh(() => load(currentCursor), authenticated && !authBlocked);
+
+  function nextPage() {
+    if (!nextCursor) return;
+    setCursorStack((current) => [...current, nextCursor]);
+    void load(nextCursor);
+  }
+
+  function previousPage() {
+    const previous = cursorStack.slice(0, -1);
+    setCursorStack(previous);
+    void load(previous[previous.length - 1] || "");
+  }
 
   async function change(alert: AlertRecord, action: "acknowledge" | "resolve") {
     setBusy(`${alert.id}:${action}`);
     try {
       await api.changeAlert(alert.id, action);
-      await load();
+      await load(currentCursor);
     } catch (cause) {
       if (isForbidden(cause)) {
         setAuthBlocked("forbidden");
@@ -98,7 +121,7 @@ export default function AlertsPage() {
               <Label htmlFor="alerts-active-only">仅活跃</Label>
             </div>
             <Hint content="登录后可用" disabled={!authenticated}>
-              <Button size="sm" variant="secondary" onClick={load} disabled={!authenticated}>
+              <Button size="sm" variant="secondary" onClick={() => { void load(currentCursor); }} disabled={!authenticated}>
                 <RefreshCw className="size-3.5" />
                 刷新
               </Button>
@@ -238,6 +261,15 @@ export default function AlertsPage() {
                   </CardEmpty>
                 </Card>
               )}
+              <PaginationControls
+                page={cursorStack.length + 1}
+                total={total}
+                count={alerts.length}
+                hasNext={Boolean(nextCursor)}
+                onPrevious={previousPage}
+                onNext={nextPage}
+                disabled={Boolean(busy)}
+              />
             </div>
           </>
         )}

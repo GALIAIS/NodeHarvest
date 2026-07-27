@@ -35,7 +35,8 @@ docker pull ghcr.io/galiais/nodeharvest:edge
 
 docker run --name nodeharvest --rm -p 8080:8080 \
   -e NODE_HARVEST_TOKEN="replace-with-subscription-secret" \
-  -e NODE_HARVEST_ADMIN_TOKEN="replace-with-admin-secret" \
+  -e NODE_HARVEST_LOCAL_AUTH=1 \
+  -e NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH="$NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH" \
   -e NODE_HARVEST_SESSION_SECRET="at-least-32-random-characters" \
   ghcr.io/galiais/nodeharvest:edge
 ```
@@ -71,8 +72,6 @@ docker build \
 ```bash
 docker run -d --name nodeharvest-smoke -p 127.0.0.1:18080:8080 \
   -e NODE_HARVEST_TOKEN="local-subscription-token" \
-  -e NODE_HARVEST_ADMIN_TOKEN="local-admin-token" \
-  -e NODE_HARVEST_SESSION_SECRET="local-session-secret-at-least-32-bytes" \
   -e NODE_HARVEST_SCHEDULE=0 \
   nodeharvest:local
 

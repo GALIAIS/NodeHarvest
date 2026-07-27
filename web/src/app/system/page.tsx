@@ -23,6 +23,7 @@ import {
 import { AuthRequired } from "@/components/auth-required";
 import { PageHeader } from "@/components/page-header";
 import { useSession } from "@/components/session-provider";
+import { useLiveRefresh } from "@/components/live-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -138,6 +139,8 @@ export default function SystemPage() {
     const initial = setTimeout(load, 0);
     return () => clearTimeout(initial);
   }, [load]);
+
+  useLiveRefresh(load, authenticated);
 
   function field<K extends keyof RuntimeForm>(key: K, value: RuntimeForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -477,7 +480,6 @@ export default function SystemPage() {
               <CardContent className="space-y-2 text-xs">
                 {[
                   ["本地登录", auth.local_enabled],
-                  ["OIDC", auth.oidc_enabled],
                   ["OpenTelemetry", observability.otel_enabled],
                   ["GeoIP", health?.geo_mmdb],
                   ["发布缓存", health?.publish_fresh],

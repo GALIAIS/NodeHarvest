@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"strings"
 
 	"github.com/GALIAIS/NodeHarvest/internal/timex"
 )
@@ -50,12 +51,66 @@ func (s *Store) ListAlerts(activeOnly bool, limit int) ([]Alert, error) {
 	if activeOnly {
 		query += ` WHERE active=1`
 	}
-	query += ` ORDER BY active DESC,created_at DESC LIMIT ?`
+	query += ` ORDER BY active DESC,created_at DESC,id DESC LIMIT ?`
 	rows, err := s.query(query, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanAlerts(rows)
+}
+
+func (s *Store) ListAlertsPage(activeOnly bool, limit int, cursor string) ([]Alert, error) {
+	if limit <= 0 || limit > 101 {
+		limit = 31
+	}
+	query := `SELECT id,kind,severity,message,details_json,active,created_at,resolved_at,acknowledged_at,acknowledged_by
+ FROM alerts`
+	conditions := []string{}
+	args := []any{}
+	if activeOnly {
+		conditions = append(conditions, `active=1`)
+	}
+	if cursor != "" {
+		var active int
+		var created string
+		cursorQuery := `SELECT active,created_at FROM alerts WHERE id=?`
+		cursorArgs := []any{cursor}
+		if activeOnly {
+			cursorQuery += ` AND active=1`
+		}
+		if err := s.queryRow(cursorQuery, cursorArgs...).Scan(&active, &created); err != nil {
+			return nil, err
+		}
+		conditions = append(conditions, `(active<? OR (active=? AND (created_at<? OR (created_at=? AND id<?))))`)
+		args = append(args, active, active, created, created, cursor)
+	}
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
+	}
+	query += ` ORDER BY active DESC,created_at DESC,id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanAlerts(rows)
+}
+
+func (s *Store) CountAlerts(activeOnly bool) (int, error) {
+	query := `SELECT COUNT(*) FROM alerts`
+	if activeOnly {
+		query += ` WHERE active=1`
+	}
+	var count int
+	if err := s.queryRow(query).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func scanAlerts(rows *sql.Rows) ([]Alert, error) {
 	var out []Alert
 	for rows.Next() {
 		var alert Alert

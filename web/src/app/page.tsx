@@ -19,18 +19,14 @@ import {
   errorMessage,
   isAuthError,
   type AlertRecord,
-  type CountryRow,
-  type DailyMetric,
-  type DashboardStats,
-  type Health,
+  type DashboardSnapshot,
   type Job,
-  type NodeItem,
-  type Source,
 } from "@/lib/api";
 import { AuthRequired } from "@/components/auth-required";
 import { JobActions } from "@/components/job-actions";
 import { PageHeader } from "@/components/page-header";
 import { useSession } from "@/components/session-provider";
+import { useLive, useLiveRefresh } from "@/components/live-provider";
 import { StatCard } from "@/components/stat-card";
 import { TrendChart } from "@/components/trend-chart";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -78,13 +74,9 @@ const GRADES = ["S", "A", "B", "C", "D", "F"] as const;
 
 export default function DashboardPage() {
   const { authenticated, canOperate, loading: sessionLoading } = useSession();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [health, setHealth] = useState<Health | null>(null);
+  const { dashboard: liveDashboard, connected } = useLive();
+  const [fallbackSnapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [top, setTop] = useState<NodeItem[]>([]);
-  const [trends, setTrends] = useState<DailyMetric[]>([]);
-  const [countries, setCountries] = useState<CountryRow[]>([]);
-  const [sources, setSources] = useState<Source[]>([]);
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
   // 告警接口属于管理面：只有本轮拉取真正成功时才把 0 条视为“无异常”
   const [alertsVisible, setAlertsVisible] = useState(false);
@@ -92,35 +84,24 @@ export default function DashboardPage() {
   const [err, setErr] = useState<string | null>(null);
   const [now, setNow] = useState(0);
 
-  const load = useCallback(async () => {
+  const loadDashboard = useCallback(async () => {
     try {
-      const [healthResult, statsResult, nodesResult, countriesResult, sourcesResult, scheduleResult] =
-        await Promise.all([
-          api.health(),
-          api.stats(),
-          api.nodes({ limit: 6, hq: true, alive: true }),
-          api.countries({ hq: true, alive: true }),
-          api.sources("health"),
-          api.schedule(),
-        ]);
-      setHealth(healthResult);
-      setStats(statsResult);
-      setTop(nodesResult.nodes);
-      setCountries(countriesResult.countries.slice(0, 8));
-      setSources(sourcesResult.slice(0, 5));
-      setSchedule(scheduleResult as Schedule);
+      setSnapshot(await api.dashboard());
       setErr(null);
     } catch (cause) {
       setErr(errorMessage(cause, "无法连接后端"));
     }
-    // trends 是公开接口；jobs / alerts 需要登录，匿名请求必然 401，直接跳过
-    const [trendResult, jobResult, alertResult] = await Promise.allSettled([
-      api.trends(30),
-      authenticated ? api.jobs({ limit: 20 }) : Promise.resolve(null),
-      authenticated ? api.alerts(true) : Promise.resolve(null),
+  }, []);
+
+  const loadManagement = useCallback(async () => {
+    if (!authenticated) return;
+    const [jobResult, alertResult, scheduleResult] = await Promise.allSettled([
+      api.jobs({ limit: 20 }),
+      api.alerts(true),
+      api.schedule(),
     ]);
-    if (trendResult.status === "fulfilled") setTrends(trendResult.value);
     if (jobResult.status === "fulfilled") setJobs(jobResult.value?.jobs ?? []);
+    if (scheduleResult.status === "fulfilled") setSchedule(scheduleResult.value as Schedule);
     // 判定依据是"这次请求是否被允许"，而不是返回值真假：无告警时后端
     // 返回 JSON null，若按真值判断会把"已登录且零告警"误判成"未登录"。
     if (!authenticated) {
@@ -141,21 +122,42 @@ export default function DashboardPage() {
   }, [authenticated]);
 
   useEffect(() => {
-    const initial = setTimeout(load, 0);
-    const refresh = setInterval(load, 10000);
+    const initial = setTimeout(loadDashboard, 0);
+    return () => clearTimeout(initial);
+  }, [loadDashboard]);
+
+  useEffect(() => {
+    const initial = setTimeout(() => {
+      if (!authenticated) {
+        setJobs([]);
+        setAlerts([]);
+        setAlertsVisible(false);
+        setSchedule({});
+        return;
+      }
+      void loadManagement();
+    }, 0);
+    return () => clearTimeout(initial);
+  }, [authenticated, loadManagement]);
+
+  useLiveRefresh(loadManagement, authenticated);
+
+  useEffect(() => {
     const clock = setInterval(() => setNow(Date.now()), 1000);
     return () => {
-      clearTimeout(initial);
-      clearInterval(refresh);
       clearInterval(clock);
     };
-  }, [load]);
+  }, []);
 
   const activeJob = jobs.find((job) => job.status === "running" || job.status === "pending");
+  const snapshot = liveDashboard ?? fallbackSnapshot;
   const nextRunSeconds = useMemo(() => {
     if (!schedule.next_run_at || !now) return null;
     return Math.max(0, Math.floor((new Date(schedule.next_run_at).getTime() - now) / 1000));
   }, [now, schedule.next_run_at]);
+  const countries = snapshot?.countries ?? [];
+  const sources = snapshot?.sources ?? [];
+  const top = snapshot?.top ?? [];
   const maxCountry = Math.max(1, ...countries.map((country) => country.count));
 
   return (
@@ -166,13 +168,15 @@ export default function DashboardPage() {
         description="从采集源、任务队列到高质量订阅池，一屏掌握当前节点供给与系统风险。"
         actions={
           <>
-            <Badge variant={health?.ok ? "success" : "danger"} className="h-8 px-2.5">
-              <span className={cn("size-1.5", health?.ok ? "bg-success" : "bg-destructive")} />
-              {health?.ok ? "系统在线" : "系统异常"}
+            <Badge variant={snapshot?.health.ok ? "success" : "danger"} className="h-8 px-2.5">
+              <span className={cn("size-1.5", snapshot?.health.ok ? "bg-success" : "bg-destructive")} />
+              {snapshot?.health.ok ? "系统在线" : "系统异常"}
             </Badge>
-            <Button variant="secondary" size="sm" onClick={load}>
-              <RefreshCw className="size-3.5" /> 刷新
-            </Button>
+            {authenticated && (
+              <Button variant="secondary" size="sm" onClick={() => { void loadDashboard(); void loadManagement(); }}>
+                <RefreshCw className="size-3.5" /> 刷新
+              </Button>
+            )}
           </>
         }
       />
@@ -188,22 +192,22 @@ export default function DashboardPage() {
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             label="全量节点"
-            value={stats?.total_nodes ?? 0}
-            hint={`启用源 ${stats?.sources_enabled ?? 0}`}
+            value={snapshot?.stats.total_nodes ?? 0}
+            hint={`启用源 ${snapshot?.stats.sources_enabled ?? 0}`}
             accent="primary"
             icon={Network}
           />
           <StatCard
             label="可用节点"
-            value={stats?.alive_nodes ?? 0}
-            hint={`均延 ${formatMs(stats?.avg_latency_ms)}`}
+            value={snapshot?.stats.alive_nodes ?? 0}
+            hint={`均延 ${formatMs(snapshot?.stats.avg_latency_ms)}`}
             accent="success"
             icon={Gauge}
           />
           <StatCard
             label="HQ 供给"
-            value={stats?.high_quality ?? 0}
-            hint={`订阅缓存 ${health?.publish_count ?? 0}`}
+            value={snapshot?.stats.high_quality ?? 0}
+            hint={`订阅缓存 ${snapshot?.health.publish_count ?? 0}`}
             accent="accent"
             icon={ShieldCheck}
           />
@@ -235,12 +239,12 @@ export default function DashboardPage() {
               </div>
               <CardAction>
                 <Badge variant="secondary">
-                  {trends.reduce((sum, row) => sum + row.samples, 0)} samples
+                  {(snapshot?.trends ?? []).reduce((sum, row) => sum + row.samples, 0)} samples
                 </Badge>
               </CardAction>
             </CardHeader>
             <CardContent>
-              <TrendChart data={trends} />
+              <TrendChart data={snapshot?.trends ?? []} />
             </CardContent>
           </Card>
 
@@ -266,16 +270,16 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 gap-2">
                 <div className="border border-border bg-muted/40 p-3">
                   <Database className="mb-2 size-4 text-primary" />
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">数据库</p>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">仪表盘快照</p>
                   <p className="mt-1 text-xs text-foreground">
-                    {health?.database.driver || "—"} · {health?.database.ok ? "OK" : "FAIL"}
+                    {snapshot?.health.nodes ?? 0} 节点 · {snapshot?.health.running_job ? "任务运行中" : "无运行任务"}
                   </p>
                 </div>
                 <div className="border border-border bg-muted/40 p-3">
                   <ServerCog className="mb-2 size-4 text-accent" />
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Redis</p>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">实时通道</p>
                   <p className="mt-1 text-xs text-foreground">
-                    {health?.redis.enabled ? (health.redis.ok ? "OK" : "FAIL") : "OFF"}
+                    {connected ? "SSE 已连接" : "正在重连"}
                   </p>
                 </div>
               </div>
@@ -295,7 +299,7 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {sessionLoading || canOperate ? (
-                <JobActions onStarted={load} />
+                <JobActions onStarted={() => { void loadManagement(); }} />
               ) : authenticated ? (
                 <AuthRequired
                   compact
@@ -334,7 +338,7 @@ export default function DashboardPage() {
                       {grade}
                     </span>
                     <p className="font-mono text-base tabular-nums">
-                      {stats?.by_grade?.[grade] ?? 0}
+                      {snapshot?.stats.by_grade?.[grade] ?? 0}
                     </p>
                   </div>
                 ))}
@@ -348,13 +352,15 @@ export default function DashboardPage() {
                 <CardTitle>HQ 国家分布</CardTitle>
                 <CardDescription>高质量池中节点最多的八个国家或地区</CardDescription>
               </div>
-              <CardAction>
-                <Button variant="ghost" size="sm" asChild>
-                  <Link href="/nodes?hq=1">
-                    查看节点 <ArrowRight className="size-3" />
-                  </Link>
-                </Button>
-              </CardAction>
+              {authenticated && (
+                <CardAction>
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link href="/nodes?hq=1">
+                      查看节点 <ArrowRight className="size-3" />
+                    </Link>
+                  </Button>
+                </CardAction>
+              )}
             </CardHeader>
             <CardContent className="space-y-2.5">
               {countries.map((country) => (
@@ -391,11 +397,13 @@ export default function DashboardPage() {
                 <CardTitle>源健康雷达</CardTitle>
                 <CardDescription>按健康分从低到高优先处理风险源</CardDescription>
               </div>
-              <CardAction>
-                <Button variant="ghost" size="sm" asChild>
-                  <Link href="/sources">治理全部</Link>
-                </Button>
-              </CardAction>
+              {authenticated && (
+                <CardAction>
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link href="/sources">治理全部</Link>
+                  </Button>
+                </CardAction>
+              )}
             </CardHeader>
             <CardContent className="space-y-0">
               {sources.map((source) => (
@@ -429,11 +437,13 @@ export default function DashboardPage() {
                 </CardTitle>
                 <CardDescription>主动异常检测与值班处理入口</CardDescription>
               </div>
-              <CardAction>
-                <Button variant="ghost" size="sm" asChild>
-                  <Link href="/alerts">打开告警台</Link>
-                </Button>
-              </CardAction>
+              {authenticated && (
+                <CardAction>
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link href="/alerts">打开告警台</Link>
+                  </Button>
+                </CardAction>
+              )}
             </CardHeader>
             <CardContent className="space-y-2">
               {alerts.slice(0, 4).map((alert) => (
@@ -468,13 +478,15 @@ export default function DashboardPage() {
               <CardTitle>当前高分节点</CardTitle>
               <CardDescription>可用、HQ 且最近进入发布池的节点样本</CardDescription>
             </div>
-            <CardAction>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/nodes?hq=1">
-                  全部 <ArrowRight className="size-3" />
-                </Link>
-              </Button>
-            </CardAction>
+            {authenticated && (
+              <CardAction>
+                <Button variant="ghost" size="sm" asChild>
+                  <Link href="/nodes?hq=1">
+                    全部 <ArrowRight className="size-3" />
+                  </Link>
+                </Button>
+              </CardAction>
+            )}
           </CardHeader>
           <CardContent className="px-0 pb-0">
             <Table>
