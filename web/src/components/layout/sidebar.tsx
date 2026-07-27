@@ -104,7 +104,7 @@ export function Sidebar() {
 
   return (
     <>
-      <aside className="relative z-20 hidden w-64 shrink-0 flex-col border-r border-border bg-card/90 backdrop-blur-xl md:flex">
+      <aside className="relative z-20 hidden w-64 shrink-0 flex-col border-r border-border bg-card/90 backdrop-blur-xl md:sticky md:top-0 md:h-dvh md:self-start md:flex">
         <div className="border-b border-border px-5 py-5">
           <Link href="/" className="flex items-center gap-3">
             <span className="corner-ticks relative flex size-10 items-center justify-center border border-primary/40 bg-primary/10">
