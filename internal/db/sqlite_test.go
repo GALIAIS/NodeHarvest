@@ -149,3 +149,36 @@ func TestTokenUsageAndAuditRange(t *testing.T) {
 		t.Fatalf("audit=%+v err=%v", entries, err)
 	}
 }
+
+func TestTokenQueriesHandleLegacyNullableColumns(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "legacy-token.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	createdAt := time.Now().Format(time.RFC3339)
+	_, err = s.exec(`INSERT INTO tokens(id,name,token_hash,token_prefix,enabled,max_rps,allow_countries,expires_at,created_at,last_used_at,note,tenant_id,allow_protocols,daily_quota)
+ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		"legacy-token", "legacy", "legacy-hash", "legacy-prefix", 1, nil, nil, nil,
+		createdAt, nil, nil, "acme", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := s.ListTokensTenant("acme")
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list=%+v err=%v", list, err)
+	}
+	if list[0].AllowCountries != nil || list[0].AllowProtocols != nil || list[0].Note != "" || list[0].MaxRPS != 0 {
+		t.Fatalf("unexpected legacy token=%+v", list[0])
+	}
+
+	if _, err := s.FindTokenByHash("legacy-hash"); err != nil {
+		t.Fatalf("find by hash: %v", err)
+	}
+	byPrefix, err := s.FindTokensByPrefix("legacy-prefix")
+	if err != nil || len(byPrefix) != 1 {
+		t.Fatalf("find by prefix=%+v err=%v", byPrefix, err)
+	}
+}

@@ -806,10 +806,10 @@ func scanToken(row rowScanner) (*Token, error) {
 func scanTokenFields(row rowScanner, withUsage bool) (*Token, error) {
 	var t Token
 	var en int
-	var countries, protocols string
-	var last, exp sql.NullString
-	fields := []any{&t.ID, &t.Name, &t.TokenHash, &t.TokenPrefix, &en, &t.MaxRPS, &countries,
-		&exp, &t.CreatedAt, &last, &t.Note, &t.TenantID, &protocols, &t.DailyQuota}
+	var maxRPS sql.NullFloat64
+	var countries, protocols, note, last, exp sql.NullString
+	fields := []any{&t.ID, &t.Name, &t.TokenHash, &t.TokenPrefix, &en, &maxRPS, &countries,
+		&exp, &t.CreatedAt, &last, &note, &t.TenantID, &protocols, &t.DailyQuota}
 	if withUsage {
 		fields = append(fields, &t.RequestsToday, &t.BytesToday)
 	}
@@ -817,13 +817,23 @@ func scanTokenFields(row rowScanner, withUsage bool) (*Token, error) {
 		return nil, err
 	}
 	t.Enabled = en == 1
-	_ = json.Unmarshal([]byte(countries), &t.AllowCountries)
-	_ = json.Unmarshal([]byte(protocols), &t.AllowProtocols)
+	if maxRPS.Valid {
+		t.MaxRPS = maxRPS.Float64
+	}
+	if countries.Valid {
+		_ = json.Unmarshal([]byte(countries.String), &t.AllowCountries)
+	}
+	if protocols.Valid {
+		_ = json.Unmarshal([]byte(protocols.String), &t.AllowProtocols)
+	}
 	if exp.Valid {
 		t.ExpiresAt = exp.String
 	}
 	if last.Valid {
 		t.LastUsedAt = last.String
+	}
+	if note.Valid {
+		t.Note = note.String
 	}
 	return &t, nil
 }
