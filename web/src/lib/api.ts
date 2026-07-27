@@ -169,12 +169,17 @@ export type DashboardSource = Pick<
   "name" | "effective_enabled" | "contribution_total" | "contribution_hq" | "health_score" | "latency_ms"
 >;
 
+export type DashboardNode = Pick<
+  NodeItem,
+  "id" | "protocol" | "name" | "source" | "country" | "latency_ms" | "score" | "grade"
+>;
+
 export type DashboardSnapshot = {
   updated_at: string;
   stats: DashboardStats;
   health: Pick<Health, "ok" | "nodes" | "running_job" | "publish_count" | "publish_fresh">;
   trends: DailyMetric[];
-  top: NodeItem[];
+  top: DashboardNode[];
   countries: CountryRow[];
   sources: DashboardSource[];
 };

@@ -110,6 +110,11 @@ func TestMutationAuthAndNodeCursor(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &dashboard); err != nil {
 		t.Fatal(err)
 	}
+	for _, field := range []string{"raw_uri", "uuid", "password", "fingerprint", "sni", "path", "host", "extra"} {
+		if strings.Contains(res.Body.String(), `"`+field+`"`) {
+			t.Fatalf("public dashboard exposed node field %q: %s", field, res.Body)
+		}
+	}
 	for _, node := range dashboard.Top {
 		if node.RawURI != "" || node.UUID != "" || node.Fingerprint != "" {
 			t.Fatalf("public dashboard leaked credentials: %+v", node)

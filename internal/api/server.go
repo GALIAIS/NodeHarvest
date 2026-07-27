@@ -54,7 +54,7 @@ type publicDashboard struct {
 	Stats     model.DashboardStats  `json:"stats"`
 	Health    publicDashboardHealth `json:"health"`
 	Trends    []db.DailyMetric      `json:"trends"`
-	Top       []*model.Node         `json:"top"`
+	Top       []dashboardNode       `json:"top"`
 	Countries []dashboardCountry    `json:"countries"`
 	Sources   []dashboardSource     `json:"sources"`
 }
@@ -82,6 +82,19 @@ type dashboardSource struct {
 	ContributionHQ    int     `json:"contribution_hq"`
 	HealthScore       float64 `json:"health_score"`
 	LatencyMS         int64   `json:"latency_ms"`
+}
+
+// dashboardNode is deliberately a separate public projection. Do not use
+// model.Node here: connection settings can contain credentials or routes.
+type dashboardNode struct {
+	ID        string         `json:"id"`
+	Protocol  model.Protocol `json:"protocol"`
+	Name      string         `json:"name"`
+	Source    string         `json:"source"`
+	Country   string         `json:"country,omitempty"`
+	LatencyMS int64          `json:"latency_ms,omitempty"`
+	Score     float64        `json:"score"`
+	Grade     string         `json:"grade"`
 }
 
 func New(svc *service.Service, sch *scheduler.Scheduler, am *auth.Manager) *Server {
@@ -280,7 +293,6 @@ func (s *Server) publicDashboard() publicDashboard {
 	top := s.svc.Store().ListNodes(store.NodeFilter{
 		AliveOnly: true, HighQuality: true, Limit: 6,
 	})
-	redactNodes(top)
 	trends := []db.DailyMetric{}
 	if database := s.svc.DB(); database != nil {
 		if rows, err := database.DailyNodeMetrics("", 30); err == nil {
@@ -292,10 +304,24 @@ func (s *Server) publicDashboard() publicDashboard {
 		Stats:     s.svc.Store().Stats(len(s.svc.EnabledSources())),
 		Health:    health,
 		Trends:    trends,
-		Top:       top,
+		Top:       dashboardNodes(top),
 		Countries: s.dashboardCountries(),
 		Sources:   s.dashboardSources(cfg),
 	}
+}
+
+func dashboardNodes(nodes []*model.Node) []dashboardNode {
+	out := make([]dashboardNode, 0, len(nodes))
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		out = append(out, dashboardNode{
+			ID: node.ID, Protocol: node.Protocol, Name: node.Name, Source: node.Source,
+			Country: node.Country, LatencyMS: node.Latency.Milliseconds(), Score: node.Score, Grade: node.Grade,
+		})
+	}
+	return out
 }
 
 func (s *Server) dashboardCountries() []dashboardCountry {
