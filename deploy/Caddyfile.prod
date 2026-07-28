@@ -1,8 +1,12 @@
 {$PUBLIC_DOMAIN} {
 	encode zstd gzip
-	@public path /sub* /api/sub* /api/health /api/ready /api/version /api/terms
-	reverse_proxy @public nodeharvest:8080
-	respond 404
+	@public path /sub /sub/* /api/sub /api/sub/* /api/health /api/ready /api/version /api/terms
+	handle @public {
+		reverse_proxy nodeharvest:8080
+	}
+	handle {
+		respond 404
+	}
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options nosniff
@@ -18,6 +22,49 @@
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options nosniff
 		Referrer-Policy no-referrer
+		-Server
+	}
+}
+
+{$SUB_STORE_DOMAIN} {
+	encode zstd gzip
+
+	@published path /share/* /download/*
+	handle @published {
+		route {
+			forward_auth nodeharvest:8080 {
+				uri /api/v1/integrations/sub-store/publish-check
+			}
+			uri query -nh_token
+			reverse_proxy sub-store:3000 {
+				header_up -Authorization
+				header_up -Cookie
+				header_up -X-Sub-Token
+				header_down -X-Frame-Options
+			}
+		}
+	}
+
+	handle {
+		route {
+			forward_auth nodeharvest:8080 {
+				uri /api/v1/integrations/sub-store/session-check
+			}
+			reverse_proxy sub-store:3000 {
+				header_up -Authorization
+				header_up -Cookie
+				header_up -X-Sub-Token
+				header_down -X-Frame-Options
+			}
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Content-Security-Policy "frame-ancestors https://{$ADMIN_DOMAIN}"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
 		-Server
 	}
 }

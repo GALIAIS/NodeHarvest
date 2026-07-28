@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"golang.org/x/net/publicsuffix"
 )
 
 // DatabaseConfig selects the durable metadata and history database.
@@ -52,16 +54,24 @@ type QueueConfig struct {
 }
 
 type AuthConfig struct {
-	LocalEnabled      bool     `yaml:"local_enabled"`
-	BootstrapUser     string   `yaml:"bootstrap_user"`
-	BootstrapTenant   string   `yaml:"bootstrap_tenant"`
-	BootstrapHash     string   `yaml:"bootstrap_password_hash"`
-	SessionSecret     string   `yaml:"session_secret"`
-	SessionTTLHours   int      `yaml:"session_ttl_hours"`
-	SessionCookieName string   `yaml:"session_cookie_name"`
-	AdminHost         string   `yaml:"admin_host"`
-	PublicHost        string   `yaml:"public_host"`
-	AdminCIDRs        []string `yaml:"admin_cidrs"`
+	LocalEnabled        bool     `yaml:"local_enabled"`
+	BootstrapUser       string   `yaml:"bootstrap_user"`
+	BootstrapTenant     string   `yaml:"bootstrap_tenant"`
+	BootstrapHash       string   `yaml:"bootstrap_password_hash"`
+	SessionSecret       string   `yaml:"session_secret"`
+	SessionTTLHours     int      `yaml:"session_ttl_hours"`
+	SessionCookieName   string   `yaml:"session_cookie_name"`
+	SessionCookieDomain string   `yaml:"session_cookie_domain"`
+	AdminHost           string   `yaml:"admin_host"`
+	PublicHost          string   `yaml:"public_host"`
+	AdminCIDRs          []string `yaml:"admin_cidrs"`
+}
+
+type SubStoreConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	PublicURL   string `yaml:"public_url"`
+	BackendPath string `yaml:"backend_path"`
+	Version     string `yaml:"version"`
 }
 
 type GovernanceConfig struct {
@@ -169,6 +179,12 @@ func (c *Config) normalizeEnterprise() {
 	if c.Auth.SessionCookieName == "" {
 		c.Auth.SessionCookieName = "nh_session"
 	}
+	c.Auth.SessionCookieDomain = strings.TrimPrefix(
+		strings.ToLower(strings.TrimSpace(c.Auth.SessionCookieDomain)), ".",
+	)
+	if c.SubStore.Version == "" {
+		c.SubStore.Version = "2.36.22"
+	}
 	if c.Governance.DisableAfterFailures <= 0 {
 		c.Governance.DisableAfterFailures = 5
 	}
@@ -231,11 +247,37 @@ func (c *Config) normalizeEnterprise() {
 	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_SESSION_SECRET")); v != "" {
 		c.Auth.SessionSecret = v
 	}
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_SESSION_COOKIE_DOMAIN")); v != "" {
+		c.Auth.SessionCookieDomain = v
+	}
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_ADMIN_HOST")); v != "" {
+		c.Auth.AdminHost = v
+	}
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_PUBLIC_HOST")); v != "" {
+		c.Auth.PublicHost = v
+	}
 	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH")); v != "" {
 		c.Auth.BootstrapHash = v
 	}
 	if v, ok := envBool("NODE_HARVEST_LOCAL_AUTH"); ok {
 		c.Auth.LocalEnabled = v
+	}
+	if v, ok := envBool("NODE_HARVEST_SUB_STORE_ENABLED"); ok {
+		c.SubStore.Enabled = v
+	}
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_SUB_STORE_PUBLIC_URL")); v != "" {
+		c.SubStore.PublicURL = v
+	}
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_SUB_STORE_BACKEND_PATH")); v != "" {
+		c.SubStore.BackendPath = v
+	}
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_SUB_STORE_VERSION")); v != "" {
+		c.SubStore.Version = v
+	}
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_TRUSTED_PROXIES")); v != "" {
+		c.Server.TrustedProxies = strings.FieldsFunc(v, func(r rune) bool {
+			return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\r' || r == '\n'
+		})
 	}
 	if v := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")); v != "" {
 		c.Observability.OTLPEndpoint = v
@@ -243,6 +285,15 @@ func (c *Config) normalizeEnterprise() {
 	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_ALERT_WEBHOOK_SECRET")); v != "" {
 		c.Governance.AlertWebhookSecret = v
 	}
+	c.Auth.SessionCookieDomain = strings.TrimPrefix(
+		strings.ToLower(strings.TrimSpace(c.Auth.SessionCookieDomain)), ".",
+	)
+	c.SubStore.PublicURL = strings.TrimRight(strings.TrimSpace(c.SubStore.PublicURL), "/")
+	c.SubStore.BackendPath = strings.TrimSpace(c.SubStore.BackendPath)
+	if c.SubStore.BackendPath != "" && !strings.HasPrefix(c.SubStore.BackendPath, "/") {
+		c.SubStore.BackendPath = "/" + c.SubStore.BackendPath
+	}
+	c.SubStore.Version = strings.TrimSpace(c.SubStore.Version)
 }
 
 func (c *Config) validateEnterprise() error {
@@ -294,6 +345,20 @@ func (c *Config) validateEnterprise() error {
 	if strings.ContainsAny(c.Auth.SessionCookieName, " ;,\t\r\n") {
 		return fmt.Errorf("auth.session_cookie_name contains invalid characters")
 	}
+	if c.Auth.SessionCookieDomain != "" {
+		if !validCookieDomain(c.Auth.SessionCookieDomain) {
+			return fmt.Errorf("auth.session_cookie_domain must be a valid parent domain")
+		}
+		if strings.HasPrefix(c.Auth.SessionCookieName, "__Host-") {
+			return fmt.Errorf("auth.session_cookie_name cannot use __Host- with a cookie domain")
+		}
+		if c.Auth.AdminHost != "" {
+			adminURL, _ := url.Parse("//" + c.Auth.AdminHost)
+			if !domainIncludesHost(c.Auth.SessionCookieDomain, adminURL.Hostname()) {
+				return fmt.Errorf("auth.session_cookie_domain must contain auth.admin_host")
+			}
+		}
+	}
 	for _, host := range []string{c.Auth.AdminHost, c.Auth.PublicHost} {
 		if strings.Contains(host, "://") || strings.ContainsAny(host, "/?#") {
 			return fmt.Errorf("auth hosts must contain a hostname only")
@@ -306,8 +371,31 @@ func (c *Config) validateEnterprise() error {
 			}
 		}
 	}
+	for _, proxy := range c.Server.TrustedProxies {
+		if _, err := netip.ParsePrefix(strings.TrimSpace(proxy)); err != nil {
+			if _, addrErr := netip.ParseAddr(strings.TrimSpace(proxy)); addrErr != nil {
+				return fmt.Errorf("invalid server.trusted_proxies entry %q", proxy)
+			}
+		}
+	}
 	if c.Auth.LocalEnabled && len(c.Auth.SessionSecret) < 32 {
 		return fmt.Errorf("auth.session_secret must contain at least 32 characters")
+	}
+	if c.SubStore.Enabled {
+		publicURL, err := url.Parse(c.SubStore.PublicURL)
+		if err != nil || publicURL.Scheme != "https" || publicURL.Host == "" || publicURL.User != nil ||
+			(publicURL.Path != "" && publicURL.Path != "/") || publicURL.RawQuery != "" || publicURL.Fragment != "" {
+			return fmt.Errorf("sub_store.public_url must be an HTTPS origin")
+		}
+		if !validSubStoreBackendPath(c.SubStore.BackendPath) {
+			return fmt.Errorf("sub_store.backend_path must be one non-root URL path segment")
+		}
+		if c.Auth.SessionCookieDomain == "" {
+			return fmt.Errorf("sub_store.enabled requires auth.session_cookie_domain")
+		}
+		if !domainIncludesHost(c.Auth.SessionCookieDomain, publicURL.Hostname()) {
+			return fmt.Errorf("auth.session_cookie_domain must contain the Sub-Store host")
+		}
 	}
 	if c.Governance.AlertWebhookURL != "" {
 		u, err := url.Parse(c.Governance.AlertWebhookURL)
@@ -341,6 +429,47 @@ func validTenant(value string) bool {
 	}
 	for i, r := range value {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || (i > 0 && (r == '-' || r == '_')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validCookieDomain(value string) bool {
+	if len(value) > 253 || !strings.Contains(value, ".") {
+		return false
+	}
+	if suffix, _ := publicsuffix.PublicSuffix(value); suffix == value {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, r := range label {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func domainIncludesHost(domain, host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	return host == domain || strings.HasSuffix(host, "."+domain)
+}
+
+func validSubStoreBackendPath(value string) bool {
+	if len(value) < 2 || len(value) > 128 || value[0] != '/' {
+		return false
+	}
+	for _, r := range value[1:] {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+			r == '-' || r == '_' || r == '.' || r == '~' {
 			continue
 		}
 		return false

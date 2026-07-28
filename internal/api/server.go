@@ -143,6 +143,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
 	s.mux.HandleFunc("GET /api/v1/auth/me", s.handleMe)
+	s.mux.HandleFunc("GET /api/v1/integrations/sub-store/session-check", s.handleSubStoreSessionCheck)
+	s.mux.HandleFunc("GET /api/v1/integrations/sub-store/publish-check", s.handleSubStorePublishCheck)
 	s.mux.HandleFunc("GET /api/public/dashboard", s.handlePublicDashboard)
 	s.mux.HandleFunc("GET /api/public/dashboard/events", s.handlePublicDashboardEvents)
 	s.mux.HandleFunc("GET /api/v1/events", s.handleEvents)
@@ -529,11 +531,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	// #nosec G124 -- HttpOnly and SameSite are fixed; Secure follows the TLS/proxy scheme for localhost development.
-	http.SetCookie(w, &http.Cookie{
+	cookie := &http.Cookie{
 		Name: s.auth.CookieName, Value: "", Path: "/", HttpOnly: true, Secure: requestHTTPS(r),
 		SameSite: http.SameSiteLaxMode, MaxAge: -1, Expires: time.Unix(1, 0),
-	})
+	}
+	// Clear the former host-only cookie as well when a shared parent domain is introduced.
+	// #nosec G124 -- the optional domain is validated at config load.
+	http.SetCookie(w, cookie)
+	if s.auth.CookieDomain != "" {
+		cookie.Domain = s.auth.CookieDomain
+		http.SetCookie(w, cookie)
+	}
 	writeJSON(w, map[string]any{"authenticated": false})
 }
 
@@ -551,15 +559,93 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, session string) {
-	// #nosec G124 -- HttpOnly and SameSite are fixed; Secure follows the TLS/proxy scheme for localhost development.
+	if s.auth.CookieDomain != "" {
+		// Remove a pre-integration host-only cookie so browsers cannot send two
+		// same-name sessions in an implementation-dependent order.
+		// #nosec G124 -- fixed security attributes; this cookie only expires old state.
+		http.SetCookie(w, &http.Cookie{
+			Name: s.auth.CookieName, Value: "", Path: "/", HttpOnly: true, Secure: requestHTTPS(r),
+			SameSite: http.SameSiteLaxMode, MaxAge: -1, Expires: time.Unix(1, 0),
+		})
+	}
+	// #nosec G124 -- HttpOnly and SameSite are fixed; the optional domain is validated at config load.
 	http.SetCookie(w, &http.Cookie{
 		Name: s.auth.CookieName, Value: session, Path: "/", HttpOnly: true, Secure: requestHTTPS(r),
-		SameSite: http.SameSiteLaxMode, MaxAge: int(s.auth.SessionTTL.Seconds()),
+		SameSite: http.SameSiteLaxMode, MaxAge: int(s.auth.SessionTTL.Seconds()), Domain: s.auth.CookieDomain,
 	})
 }
 
 func requestHTTPS(r *http.Request) bool {
 	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+func (s *Server) handleSubStoreSessionCheck(w http.ResponseWriter, r *http.Request) {
+	if !s.svc.Config().SubStore.Enabled {
+		http.NotFound(w, r)
+		return
+	}
+	principal := s.requireRole(w, r, auth.RoleOperator)
+	if principal == nil {
+		return
+	}
+	if principal.TenantID != "default" {
+		http.Error(w, "Sub-Store is restricted to the default tenant", http.StatusForbidden)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleSubStorePublishCheck(w http.ResponseWriter, r *http.Request) {
+	if !s.svc.Config().SubStore.Enabled {
+		http.NotFound(w, r)
+		return
+	}
+	method := r.Header.Get("X-Forwarded-Method")
+	if method != http.MethodGet && method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	forwardedURI := strings.TrimSpace(r.Header.Get("X-Forwarded-Uri"))
+	original, err := url.ParseRequestURI(forwardedURI)
+	if err != nil || original.IsAbs() ||
+		(!strings.HasPrefix(original.Path, "/share/") && !strings.HasPrefix(original.Path, "/download/")) {
+		http.Error(w, "invalid forwarded URI", http.StatusBadRequest)
+		return
+	}
+	if principal, err := s.auth.RequestPrincipal(r); err == nil && principal != nil &&
+		principal.Authenticated && principal.Role.Allows(auth.RoleOperator) {
+		if principal.TenantID != "default" {
+			http.Error(w, "Sub-Store is restricted to the default tenant", http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	check := r.Clone(r.Context())
+	checkURL := *r.URL
+	checkURL.Path = original.Path
+	checkURL.RawPath = original.RawPath
+	query := original.Query()
+	nodeToken := query.Get("nh_token")
+	// Sub-Store also names its own share credential "token". Remove that value
+	// only from the authorization clone so it cannot shadow a NodeHarvest header.
+	query.Del("token")
+	query.Del("nh_token")
+	if nodeToken != "" {
+		query.Set("token", nodeToken)
+	}
+	checkURL.RawQuery = query.Encode()
+	check.URL = &checkURL
+	principal, ok := s.ensurePublish(w, check)
+	if !ok {
+		return
+	}
+	if principal != nil && (len(principal.AllowCountries) > 0 || len(principal.AllowProtocols) > 0 ||
+		(principal.Kind == "db" && principal.TenantID != "default")) {
+		http.Error(w, "scoped token cannot access shared Sub-Store output", http.StatusForbidden)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -1127,6 +1213,11 @@ func (s *Server) ensureExport(w http.ResponseWriter, r *http.Request) bool {
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.svc.Config()
+	subStoreFrontendURL := ""
+	if cfg.SubStore.Enabled {
+		backendURL := cfg.SubStore.PublicURL + cfg.SubStore.BackendPath
+		subStoreFrontendURL = cfg.SubStore.PublicURL + "?api=" + url.QueryEscape(backendURL)
+	}
 	writeJSON(w, map[string]any{
 		"concurrency":         cfg.App.Concurrency,
 		"fetch_timeout":       cfg.App.FetchTimeoutSec,
@@ -1192,6 +1283,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"local_enabled": cfg.Auth.LocalEnabled,
 			"admin_host":    cfg.Auth.AdminHost,
 			"public_host":   cfg.Auth.PublicHost,
+		},
+		"sub_store": map[string]any{
+			"enabled":      cfg.SubStore.Enabled,
+			"public_url":   cfg.SubStore.PublicURL,
+			"backend_path": cfg.SubStore.BackendPath,
+			"frontend_url": subStoreFrontendURL,
+			"version":      cfg.SubStore.Version,
 		},
 		"governance": map[string]any{
 			"disable_after_failures": cfg.Governance.DisableAfterFailures,
@@ -2559,9 +2657,11 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func managementBoundary(next http.Handler, cfg *config.Config, am *auth.Manager) http.Handler {
 	publicAPI := map[string]bool{
-		"/api/health": true, "/api/ready": true, "/api/version": true,
+		"/api/health": true, "/api/ready": true, "/api/version": true, "/api/terms": true,
 		"/api/public/dashboard": true, "/api/public/dashboard/events": true,
 		"/api/v1/auth/login": true, "/api/v1/auth/logout": true, "/api/v1/auth/me": true,
+		"/api/v1/integrations/sub-store/session-check": true,
+		"/api/v1/integrations/sub-store/publish-check": true,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := requestHost(r.Host)

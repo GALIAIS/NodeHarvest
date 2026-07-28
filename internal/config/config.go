@@ -30,6 +30,7 @@ type Config struct {
 	ObjectStore   ObjectStoreConfig   `yaml:"object_store"`
 	Queue         QueueConfig         `yaml:"queue"`
 	Auth          AuthConfig          `yaml:"auth"`
+	SubStore      SubStoreConfig      `yaml:"sub_store"`
 	Governance    GovernanceConfig    `yaml:"governance"`
 	QualityV2     QualityV2Config     `yaml:"quality_v2"`
 	Observability ObservabilityConfig `yaml:"observability"`
@@ -293,6 +294,7 @@ func Default() *Config {
 			SessionCookieName: "nh_session",
 			BootstrapTenant:   "default",
 		},
+		SubStore: SubStoreConfig{Version: "2.36.22"},
 		Governance: GovernanceConfig{
 			DisableAfterFailures: 5,
 			CooldownHours:        6,

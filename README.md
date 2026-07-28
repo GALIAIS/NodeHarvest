@@ -15,6 +15,7 @@
 - 本地 bcrypt 账户、签名会话、viewer/operator/admin RBAC、多租户隔离。
 - bcrypt 订阅 Token、国家/协议 ACL、RPS、日请求配额、流量统计、到期和吊销。
 - global-hq、verified、streaming、AI-friendly、low-latency 及国家分区订阅。
+- 完整接入 Sub-Store：订阅组合、过滤、脚本处理、格式转换、文件托管和多客户端输出。
 - Prometheus、OpenTelemetry、Jaeger、结构化 request/job/trace ID、异常生命周期和签名 Webhook。
 - 完整管理控制台：趋势、国家分布、源治理、任务事件、Token、用户、审计、告警、热配置和合规页。
 - CI、SBOM、安全扫描、可复现镜像、Compose、Helm、加密备份、验证恢复、原子发布和回滚。
@@ -32,6 +33,8 @@ Scheduler/API ── durable queue ───┤
                                   ├── Worker replicas ── sing-box/xray
                                   └── S3/MinIO artifacts
 
+Operator session ── Caddy auth ── Sub-Store (isolated origin + persistent data)
+
 Prometheus ← /metrics       OTLP collector → Jaeger
 ```
 
@@ -44,6 +47,7 @@ Prometheus ← /metrics       OTLP collector → Jaeger
 | Go | 1.26.5 |
 | Node.js | 24（构建控制台） |
 | Docker | Compose v2（生产栈） |
+| Sub-Store | 2.36.22（生产 Compose） |
 | 可选 | PostgreSQL 17、Redis 8、S3/MinIO、sing-box 1.13.12 或 xray |
 
 ## 本地启动
@@ -113,7 +117,7 @@ docker run --rm -p 8080:8080 \
 
 ## 生产 Compose
 
-`deploy/compose.prod.yml` 包含 PostgreSQL、Redis、MinIO、API、Worker、Caddy、
+`deploy/compose.prod.yml` 包含 PostgreSQL、Redis、MinIO、API、Worker、Sub-Store、Caddy、
 Prometheus、Jaeger、OTel Collector、node-exporter 和 blackbox-exporter。
 
 ```bash
@@ -126,12 +130,19 @@ export OBJECT_STORE_SECRET_KEY="..."
 export NODE_HARVEST_IMAGE="ghcr.io/your-org/nodeharvest:stable"
 export PUBLIC_DOMAIN="node.example.com"
 export ADMIN_DOMAIN="admin.example.com"
+export SUB_STORE_DOMAIN="store.example.com"
+export SESSION_COOKIE_DOMAIN="example.com"
+export SUB_STORE_BACKEND_PATH="/replace-with-a-random-path"
 docker compose -f deploy/compose.prod.yml up -d
 ```
 
 未登录浏览器仅可查看仪表盘；管理域名承载登录后的控制台及管理 API，`/sub*` 只接受
 订阅 Token。详细步骤见
 [deploy/DEPLOY.md](deploy/DEPLOY.md)。
+
+Sub-Store 使用独立子域承载完整上游界面，operator/admin 的账号会话保护全部管理请求；
+复制给订阅客户端的 `/share`、`/download` 地址仍需 NodeHarvest 节点 Token。配置、使用、
+备份与安全边界见 [Sub-Store 集成指南](docs/SUB_STORE.md)。
 
 ## 订阅
 
@@ -163,6 +174,8 @@ GET /sub/country/{code}/{raw|base64|clash}
 - [安全基线](docs/SECURITY.md)
 - [部署指南](deploy/DEPLOY.md)
 - [容器镜像](docs/CONTAINER_IMAGE.md)
+- [Sub-Store 集成](docs/SUB_STORE.md)
+- [第三方组件声明](THIRD_PARTY_NOTICES.md)
 - [企业路线图（已完成）](docs/ENTERPRISE_ROADMAP.md)
 - [OpenAPI 3.1](docs/openapi.yaml)
 
@@ -170,3 +183,5 @@ GET /sub/country/{code}/{raw|base64|clash}
 
 NodeHarvest 采用 [GNU Affero General Public License v3.0 or later](LICENSE)。
 如果修改后通过网络向用户提供服务，需要向这些用户提供对应的修改后源码。
+Sub-Store 仍按其 AGPL-3.0 独立授权，版本与对应源码见
+[第三方组件声明](THIRD_PARTY_NOTICES.md)。

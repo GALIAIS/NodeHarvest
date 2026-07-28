@@ -79,6 +79,43 @@ func TestAllowQueryTokenEnvOverride(t *testing.T) {
 	}
 }
 
+func TestSubStoreEnvironmentAndCookieBoundary(t *testing.T) {
+	t.Setenv("NODE_HARVEST_SUB_STORE_ENABLED", "1")
+	t.Setenv("NODE_HARVEST_SUB_STORE_PUBLIC_URL", "https://store.node.example.com/")
+	t.Setenv("NODE_HARVEST_SUB_STORE_BACKEND_PATH", "private-backend")
+	t.Setenv("NODE_HARVEST_SESSION_COOKIE_DOMAIN", ".node.example.com")
+	t.Setenv("NODE_HARVEST_ADMIN_HOST", "admin.node.example.com")
+	t.Setenv("NODE_HARVEST_PUBLIC_HOST", "node.example.com")
+	t.Setenv("NODE_HARVEST_TRUSTED_PROXIES", "172.16.0.0/12, 10.0.0.0/8")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.SubStore.Enabled || cfg.SubStore.PublicURL != "https://store.node.example.com" ||
+		cfg.SubStore.BackendPath != "/private-backend" ||
+		cfg.Auth.SessionCookieDomain != "node.example.com" ||
+		cfg.Auth.AdminHost != "admin.node.example.com" || cfg.Auth.PublicHost != "node.example.com" ||
+		len(cfg.Server.TrustedProxies) != 2 {
+		t.Fatalf("sub-store environment was not normalized: %+v %+v", cfg.SubStore, cfg.Auth)
+	}
+
+	cfg.SubStore.PublicURL = "https://store.example.net"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected cross-domain Sub-Store host to be rejected")
+	}
+	cfg.SubStore.PublicURL = "https://store.node.example.com"
+	cfg.SubStore.BackendPath = "/nested/path"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected multi-segment Sub-Store backend path to be rejected")
+	}
+	cfg = Default()
+	cfg.Auth.SessionCookieDomain = "co.uk"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected public-suffix cookie domain to be rejected")
+	}
+}
+
 func TestPublishPrefixRejectsBuiltInRoutes(t *testing.T) {
 	cfg := Default()
 	cfg.Publish.PathPrefix = "/api/health"

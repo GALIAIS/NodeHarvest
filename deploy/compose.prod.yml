@@ -8,6 +8,14 @@ x-app-environment: &app-environment
   NODE_HARVEST_LOCAL_AUTH: "1"
   NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH: ${NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH:?set NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH}
   NODE_HARVEST_SESSION_SECRET: ${NODE_HARVEST_SESSION_SECRET:?set NODE_HARVEST_SESSION_SECRET}
+  NODE_HARVEST_SESSION_COOKIE_DOMAIN: ${SESSION_COOKIE_DOMAIN:?set SESSION_COOKIE_DOMAIN}
+  NODE_HARVEST_ADMIN_HOST: ${ADMIN_DOMAIN:?set ADMIN_DOMAIN}
+  NODE_HARVEST_PUBLIC_HOST: ${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN}
+  NODE_HARVEST_SUB_STORE_ENABLED: "1"
+  NODE_HARVEST_SUB_STORE_PUBLIC_URL: https://${SUB_STORE_DOMAIN:?set SUB_STORE_DOMAIN}
+  NODE_HARVEST_SUB_STORE_BACKEND_PATH: ${SUB_STORE_BACKEND_PATH:?set SUB_STORE_BACKEND_PATH}
+  NODE_HARVEST_SUB_STORE_VERSION: "2.36.22"
+  NODE_HARVEST_TRUSTED_PROXIES: "${NODE_HARVEST_TRUSTED_PROXIES:-127.0.0.1/32,::1/128,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}"
   NODE_HARVEST_ALERT_WEBHOOK_SECRET: ${NODE_HARVEST_ALERT_WEBHOOK_SECRET:-}
   NODE_HARVEST_OBJECT_STORE_ENDPOINT: http://minio:9000
   NODE_HARVEST_OBJECT_STORE_ACCESS_KEY: ${OBJECT_STORE_ACCESS_KEY:?set OBJECT_STORE_ACCESS_KEY}
@@ -115,12 +123,32 @@ services:
       minio:
         condition: service_healthy
 
+  sub-store:
+    image: xream/sub-store:2.36.22@sha256:a031ebef93d0ce6cc0a2a5043ce997fdcfca1b4cb8bf4f1c0e547eb1d8ba70df
+    restart: unless-stopped
+    environment:
+      SUB_STORE_FRONTEND_BACKEND_PATH: ${SUB_STORE_BACKEND_PATH:?set SUB_STORE_BACKEND_PATH}
+      SUB_STORE_BACKEND_MERGE: "true"
+      SUB_STORE_CORS_ALLOWED_ORIGINS: https://${SUB_STORE_DOMAIN:?set SUB_STORE_DOMAIN},https://${ADMIN_DOMAIN:?set ADMIN_DOMAIN}
+    volumes:
+      - sub-store-data:/opt/app/data
+    read_only: true
+    tmpfs: [/tmp:size=64m,mode=1777]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD-SHELL, 'wget -qO- "http://127.0.0.1:3000${SUB_STORE_BACKEND_PATH:?set SUB_STORE_BACKEND_PATH}/api/utils/env" >/dev/null || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
     environment:
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN}
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:?set ADMIN_DOMAIN}
+      SUB_STORE_DOMAIN: ${SUB_STORE_DOMAIN:?set SUB_STORE_DOMAIN}
     ports:
       - 80:80
       - 443:443
@@ -128,7 +156,11 @@ services:
       - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on: [nodeharvest]
+    depends_on:
+      nodeharvest:
+        condition: service_healthy
+      sub-store:
+        condition: service_healthy
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.134.0
@@ -178,3 +210,4 @@ volumes:
   caddy-config:
   prometheus-data:
   object-data:
+  sub-store-data:

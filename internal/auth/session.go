@@ -63,6 +63,7 @@ func NewManager(cfg config.AuthConfig, database *db.Store, masterToken string) (
 		SessionSecret: cfg.SessionSecret,
 		SessionTTL:    time.Duration(cfg.SessionTTLHours) * time.Hour,
 		CookieName:    cfg.SessionCookieName,
+		CookieDomain:  cfg.SessionCookieDomain,
 		LocalEnabled:  cfg.LocalEnabled,
 	}
 	if manager.SessionTTL <= 0 {

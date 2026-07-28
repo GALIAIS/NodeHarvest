@@ -23,6 +23,15 @@
 - `deploy/Caddyfile.prod` 的公网域名只允许订阅和健康检查路径。
 - `/metrics` 与可选 pprof 属于管理面，不应直接暴露公网。
 
+## Sub-Store 隔离
+
+- Sub-Store 使用独立子域且不发布宿主机端口；全部请求先经过 Caddy `forward_auth`。
+- 管理面仅接受 default 租户 operator/admin 会话；共享输出接受会话或节点 Token。
+- 带国家/协议 ACL 或非 default 租户的 Token 会被拒绝，避免把不透明的上游输出绕过节点范围。
+- Caddy 校验后删除 NodeHarvest Cookie、Authorization、X-Sub-Token 和 `nh_token`，
+  Sub-Store 容器不会接触 NodeHarvest 凭据。
+- 共享 Cookie 域必须是管理域与 Sub-Store 域共同的受控父域；不得使用公共后缀或托管平台共享域。
+
 ## 信任边界
 
 - 所有 JSON body 有大小上限、单值解析和字段校验。
@@ -100,6 +109,7 @@ TLS 证书验证默认开启。只有采集 URI 显式携带 `insecure=true`、
 - [ ] 数据库、Redis、对象存储未直接暴露公网。
 - [ ] `allow_query_token=false`，除非客户端兼容性明确要求。
 - [ ] CORS、trusted proxies、admin CIDRs 使用精确列表。
+- [ ] Sub-Store 独立域、共享 Cookie 父域、default 租户专用 Token 和数据卷备份已验证。
 - [ ] 加密备份、异地复制和恢复演练已验证。
 - [ ] govulncheck、gosec、npm audit、镜像扫描和 SBOM 通过。
 - [ ] 泄漏过的历史密钥已在提供商侧轮换，而非只从当前文件删除。

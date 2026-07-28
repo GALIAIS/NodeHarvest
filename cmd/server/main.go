@@ -248,7 +248,8 @@ func spaHandler(webDir string) http.Handler {
 		root = resolved
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api") || strings.HasPrefix(r.URL.Path, "/sub") || r.URL.Path == "/metrics" {
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") ||
+			r.URL.Path == "/sub" || strings.HasPrefix(r.URL.Path, "/sub/") || r.URL.Path == "/metrics" {
 			http.NotFound(w, r)
 			return
 		}
@@ -258,6 +259,15 @@ func spaHandler(webDir string) http.Handler {
 			if info, err := os.Stat(resolved); err == nil && !info.IsDir() {
 				http.ServeFile(w, r, resolved)
 				return
+			}
+		}
+		if filepath.Ext(p) == "" {
+			if resolved, err := filepath.EvalSymlinks(p + ".html"); err == nil && withinDir(root, resolved) {
+				// #nosec G703 -- the canonical static-export path is constrained to the web root.
+				if info, err := os.Stat(resolved); err == nil && !info.IsDir() {
+					http.ServeFile(w, r, resolved)
+					return
+				}
 			}
 		}
 		index, err := filepath.EvalSymlinks(filepath.Join(root, "index.html"))

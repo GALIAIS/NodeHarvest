@@ -120,6 +120,12 @@ func TestMutationAuthAndNodeCursor(t *testing.T) {
 			t.Fatalf("public dashboard leaked credentials: %+v", node)
 		}
 	}
+	req = httptest.NewRequest(http.MethodGet, "/api/terms", nil)
+	res = httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("public terms status=%d body=%s", res.Code, res.Body)
+	}
 
 	viewerSession, err := manager.IssueSession(&auth.Principal{
 		Kind: "local", Name: "viewer", Subject: "viewer", Role: auth.RoleViewer,
@@ -510,5 +516,132 @@ func TestLoginHasDedicatedBruteForceLimit(t *testing.T) {
 		if res.Code != want {
 			t.Fatalf("attempt %d status=%d want=%d body=%s", attempt+1, res.Code, want, res.Body)
 		}
+	}
+}
+
+func TestSubStoreSessionAndPublishBoundaries(t *testing.T) {
+	cfg := config.Default()
+	cfg.Geo.Enabled = false
+	cfg.Publish.PreRender = false
+	cfg.Export.Dir = t.TempDir()
+	cfg.Publish.Token = "node-token"
+	cfg.Security.AllowQueryToken = true
+	cfg.SubStore.Enabled = true
+	cfg.SubStore.PublicURL = "https://store.node.example.com"
+	cfg.SubStore.BackendPath = "/private-backend"
+	cfg.Auth.SessionCookieDomain = "node.example.com"
+	st, err := store.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, operatorSession := issueTestSession(t, auth.RoleOperator)
+	manager.MasterToken = cfg.Publish.Token
+	database, err := db.Open(filepath.Join(t.TempDir(), "sub-store-tokens.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	manager.DB = database
+	scopedToken, err := manager.CreateToken(
+		"scoped", "", "default", []string{"us"}, nil, 0, 0, 0, "test",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewerSession, err := manager.IssueSession(&auth.Principal{
+		Kind: "local", Name: "viewer", Subject: "viewer", Role: auth.RoleViewer,
+		TenantID: "default", Authenticated: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := New(service.New(cfg, st), nil, manager).Handler()
+
+	checkSession := func(session string) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations/sub-store/session-check", nil)
+		if session != "" {
+			withSession(req, manager, session)
+		}
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		return res.Code
+	}
+	if got := checkSession(""); got != http.StatusUnauthorized {
+		t.Fatalf("anonymous session check status=%d", got)
+	}
+	if got := checkSession(viewerSession); got != http.StatusForbidden {
+		t.Fatalf("viewer session check status=%d", got)
+	}
+	if got := checkSession(operatorSession); got != http.StatusNoContent {
+		t.Fatalf("operator session check status=%d", got)
+	}
+	otherTenantSession, err := manager.IssueSession(&auth.Principal{
+		Kind: "local", Name: "operator", Subject: "other-operator", Role: auth.RoleOperator,
+		TenantID: "other", Authenticated: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := checkSession(otherTenantSession); got != http.StatusForbidden {
+		t.Fatalf("cross-tenant session check status=%d", got)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations/sub-store/publish-check", nil)
+	req.Header.Set("X-Forwarded-Method", http.MethodPost)
+	req.Header.Set("X-Forwarded-Uri", "/share/sub/public")
+	withSession(req, manager, operatorSession)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("non-GET session publish check status=%d", res.Code)
+	}
+
+	checkPublish := func(uri string) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations/sub-store/publish-check", nil)
+		req.Header.Set("X-Forwarded-Method", http.MethodGet)
+		req.Header.Set("X-Forwarded-Uri", uri)
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		return res.Code
+	}
+	if got := checkPublish("/share/sub/public?target=ClashMeta"); got != http.StatusUnauthorized {
+		t.Fatalf("anonymous publish check status=%d", got)
+	}
+	if got := checkPublish("/share/sub/public?target=ClashMeta&nh_token=node-token"); got != http.StatusNoContent {
+		t.Fatalf("token publish check status=%d", got)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/integrations/sub-store/publish-check", nil)
+	req.Header.Set("X-Forwarded-Method", http.MethodGet)
+	req.Header.Set("X-Forwarded-Uri", "/share/sub/public?token=sub-store-share-token")
+	req.Header.Set("Authorization", "Bearer node-token")
+	res = httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("header token with Sub-Store share token status=%d", res.Code)
+	}
+	if got := checkPublish("/share/sub/public?nh_token=" + scopedToken.PlainToken); got != http.StatusForbidden {
+		t.Fatalf("scoped token status=%d", got)
+	}
+	if got := checkPublish("/api/settings?nh_token=node-token"); got != http.StatusBadRequest {
+		t.Fatalf("non-publish path status=%d", got)
+	}
+}
+
+func TestSharedSessionCookieReplacesHostOnlyCookie(t *testing.T) {
+	server := &Server{auth: &auth.Manager{
+		CookieName: "nh_session", CookieDomain: "node.example.com", SessionTTL: time.Hour,
+	}}
+	req := httptest.NewRequest(http.MethodPost, "https://admin.node.example.com/api/v1/auth/login", nil)
+	res := httptest.NewRecorder()
+	server.setSessionCookie(res, req, "signed-session")
+	cookies := res.Result().Cookies()
+	if len(cookies) != 2 {
+		t.Fatalf("set-cookie count=%d", len(cookies))
+	}
+	if cookies[0].MaxAge != -1 || cookies[0].Domain != "" {
+		t.Fatalf("host-only migration cookie=%+v", cookies[0])
+	}
+	if cookies[1].Value != "signed-session" || cookies[1].Domain != "node.example.com" ||
+		!cookies[1].HttpOnly || !cookies[1].Secure || cookies[1].SameSite != http.SameSiteLaxMode {
+		t.Fatalf("shared session cookie=%+v", cookies[1])
 	}
 }

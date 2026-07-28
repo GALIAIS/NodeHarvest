@@ -1,4 +1,5 @@
 * text=auto
+.gitattributes text eol=lf
 
 *.go text eol=lf
 *.mod text eol=lf
@@ -8,6 +9,7 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 Dockerfile text eol=lf
+Caddyfile* text eol=lf
 *.tpl text eol=lf
 *.sql text eol=lf
 *.ts text eol=lf

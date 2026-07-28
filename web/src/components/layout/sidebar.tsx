@@ -20,6 +20,7 @@ import {
   Settings2,
   ShieldCheck,
   Users,
+  Workflow,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useSession } from "@/components/session-provider";
@@ -38,6 +39,7 @@ const groups = [
       { href: "/jobs", label: "任务中心", icon: Activity },
       { href: "/ai", label: "AI 可达", icon: Bot },
       { href: "/export", label: "订阅池", icon: Download },
+      { href: "/sub-store", label: "订阅工坊", icon: Workflow },
     ],
   },
   {

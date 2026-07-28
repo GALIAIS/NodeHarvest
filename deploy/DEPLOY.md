@@ -11,7 +11,8 @@
 
 ## 生产 Compose
 
-准备 DNS：公开订阅域名指向 VPS，管理域名应再叠加 VPN、Cloudflare Access 或 IP allowlist。
+准备 DNS：公开订阅、管理和 Sub-Store 三个域名指向 VPS。管理域名应再叠加 VPN、
+Cloudflare Access 或 IP allowlist；Sub-Store 域名由 NodeHarvest 会话网关保护。
 
 ```bash
 export POSTGRES_PASSWORD="..."
@@ -23,13 +24,20 @@ export OBJECT_STORE_SECRET_KEY="..."
 export NODE_HARVEST_IMAGE="ghcr.io/your-org/nodeharvest:stable"
 export PUBLIC_DOMAIN="node.example.com"
 export ADMIN_DOMAIN="admin.example.com"
+export SUB_STORE_DOMAIN="store.example.com"
+export SESSION_COOKIE_DOMAIN="example.com"
+export SUB_STORE_BACKEND_PATH="/replace-with-a-random-path"
 docker compose -f deploy/compose.prod.yml config
 docker compose -f deploy/compose.prod.yml up -d
 ```
 
-服务包括 PostgreSQL 17、Redis 8、MinIO、API、Worker、Caddy、OTel Collector、
+服务包括 PostgreSQL 17、Redis 8、MinIO、API、Worker、Sub-Store、Caddy、OTel Collector、
 Jaeger、Prometheus、node-exporter 和 blackbox-exporter。应用容器使用非 root、
 只读根文件系统、无 Linux capabilities 和独立数据卷。
+
+`SESSION_COOKIE_DOMAIN` 必须是 `ADMIN_DOMAIN` 与 `SUB_STORE_DOMAIN` 的共同受控父域。
+Sub-Store 使用独立源站是因为其路由和 Service Worker 以 `/` 为作用域，不能安全挂载到
+NodeHarvest 子路径。完整说明见 [Sub-Store 集成指南](../docs/SUB_STORE.md)。
 
 验证：
 
@@ -140,13 +148,20 @@ sudo APP_DIR=/opt/nodeharvest bash deploy/rollback.sh VERSION
 | `NODE_HARVEST_TOKEN` | master 订阅凭证 |
 | `NODE_HARVEST_LOCAL_AUTH` | 设为 `1` 启用本地账号密码登录 |
 | `NODE_HARVEST_SESSION_SECRET` | 会话签名，至少 32 字符 |
+| `SESSION_COOKIE_DOMAIN` | 管理域与 Sub-Store 域共同的 Cookie 父域 |
+| `NODE_HARVEST_ADMIN_HOST` | 管理 API 允许的 Host；Compose 由 `ADMIN_DOMAIN` 注入 |
+| `NODE_HARVEST_PUBLIC_HOST` | 节点订阅允许的 Host；Compose 由 `PUBLIC_DOMAIN` 注入 |
 | `NODE_HARVEST_BOOTSTRAP_PASSWORD_HASH` | 本地 bootstrap bcrypt hash |
+| `SUB_STORE_DOMAIN` | Sub-Store 独立 HTTPS 域名 |
+| `SUB_STORE_BACKEND_PATH` | Sub-Store 合并后端的单段随机路径（以 `/` 开头） |
 | `NODE_HARVEST_EMBEDDED_WORKERS` | API 进程内 Worker 数；多副本设为 0 |
 | `NODE_HARVEST_OBJECT_STORE_ENDPOINT` | S3/MinIO endpoint |
 | `NODE_HARVEST_OBJECT_STORE_ACCESS_KEY` | 对象存储 access key |
 | `NODE_HARVEST_OBJECT_STORE_SECRET_KEY` | 对象存储 secret |
 | `NODE_HARVEST_ALERT_WEBHOOK_SECRET` | 告警 HMAC secret |
 | `NODE_HARVEST_ALLOW_QUERY_TOKEN` | 是否允许 `?token=` 携带订阅凭据，默认 `0` |
+| `NODE_HARVEST_SUB_STORE_*` | Compose 自动注入的 Sub-Store 开关、URL、路径和版本 |
+| `NODE_HARVEST_TRUSTED_PROXIES` | 逗号分隔的反代 CIDR；Compose 默认信任内部私网 |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP endpoint |
 
 非密钥运行配置位于 `configs/config.yaml`。热配置只允许更新发布阈值、源治理阈值

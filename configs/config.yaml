@@ -706,9 +706,17 @@ auth:
   session_secret: ""
   session_ttl_hours: 12
   session_cookie_name: nh_session
+  session_cookie_domain: ""  # Sub-Store 独立子域启用时填写双方共同的受控父域
   admin_host: ""
   public_host: ""
   admin_cidrs: []
+
+# Sub-Store 以官方容器完整接入；默认关闭，生产 Compose 通过环境变量启用。
+sub_store:
+  enabled: false
+  public_url: ""
+  backend_path: ""
+  version: "2.36.22"
 
 server:
   read_header_timeout_sec: 10

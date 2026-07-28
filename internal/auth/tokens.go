@@ -22,6 +22,7 @@ type Manager struct {
 	SessionSecret string
 	SessionTTL    time.Duration
 	CookieName    string
+	CookieDomain  string
 	LocalEnabled  bool
 }
 

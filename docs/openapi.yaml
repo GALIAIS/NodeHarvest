@@ -21,6 +21,7 @@ tags:
   - name: Distribution
   - name: Administration
   - name: Subscription
+  - name: Integrations
 paths:
   /api/health:
     get:
@@ -52,6 +53,7 @@ paths:
     get:
       tags: [Status]
       summary: Acceptable-use policy
+      security: []
       responses:
         "200": {$ref: "#/components/responses/JSON"}
   /api/v1/auth/login:
@@ -98,6 +100,39 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Session"}
+  /api/v1/integrations/sub-store/session-check:
+    get:
+      tags: [Integrations]
+      summary: Caddy authentication hook for the Sub-Store management surface
+      description: Requires an operator or admin session and returns no response body.
+      responses:
+        "204": {description: Session accepted}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /api/v1/integrations/sub-store/publish-check:
+    get:
+      tags: [Integrations]
+      summary: Caddy authentication hook for Sub-Store share and download routes
+      description: |
+        Accepts an operator/admin session or a subscription credential. Caddy supplies
+        the original route in X-Forwarded-Uri; URL-only clients use the `nh_token`
+        parameter, which is removed before proxying upstream.
+      security:
+        - sessionCookie: []
+        - bearerSubscription: []
+        - subscriptionToken: []
+      parameters:
+        - {name: X-Forwarded-Uri, in: header, required: true, schema: {type: string}}
+        - {name: X-Forwarded-Method, in: header, schema: {type: string, enum: [GET, HEAD]}}
+      responses:
+        "204": {description: Request accepted}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "405": {$ref: "#/components/responses/Error"}
+        "429": {$ref: "#/components/responses/Error"}
   /api/public/dashboard:
     get:
       tags: [Status]
