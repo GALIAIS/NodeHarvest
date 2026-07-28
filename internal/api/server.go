@@ -531,12 +531,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// #nosec G124 -- local HTTP development mirrors the request; production is HTTPS-only at Caddy.
 	cookie := &http.Cookie{
 		Name: s.auth.CookieName, Value: "", Path: "/", HttpOnly: true, Secure: requestHTTPS(r),
 		SameSite: http.SameSiteLaxMode, MaxAge: -1, Expires: time.Unix(1, 0),
 	}
 	// Clear the former host-only cookie as well when a shared parent domain is introduced.
-	// #nosec G124 -- the optional domain is validated at config load.
 	http.SetCookie(w, cookie)
 	if s.auth.CookieDomain != "" {
 		cookie.Domain = s.auth.CookieDomain
