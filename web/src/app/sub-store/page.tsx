@@ -79,9 +79,9 @@ export default function SubStorePage() {
 
   return (
     <>
-      <header>
-        <h1>Sub-Store 订阅工坊</h1>
-        <p>使用 NodeHarvest 订阅作为 Sub-Store 数据源。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">Sub-Store 订阅工坊</h1>
+        <p className="text-muted-foreground">使用 NodeHarvest 订阅作为 Sub-Store 数据源。</p>
       </header>
       {error && (
         <Alert variant="destructive">
@@ -101,7 +101,7 @@ export default function SubStorePage() {
             <CardTitle>数据源</CardTitle>
             <CardDescription>Sub-Store {subStore.version}</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <Badge>已启用</Badge>
             {Object.entries(sources).map(([format, value]) => (
               <p key={format}>

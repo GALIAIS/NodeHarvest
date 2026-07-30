@@ -151,9 +151,9 @@ export default function TokensPage() {
 
   return (
     <>
-      <header>
-        <h1>订阅 Token</h1>
-        <p>创建、启用、停用和删除订阅凭证。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">订阅 Token</h1>
+        <p className="text-muted-foreground">创建、启用、停用和删除订阅凭证。</p>
       </header>
       {error && (
         <Alert variant="destructive">
@@ -167,7 +167,7 @@ export default function TokensPage() {
             <CardTitle>新 Token</CardTitle>
             <CardDescription>明文仅在创建后展示，请立即保存。</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex flex-wrap items-center gap-2">
             <code>{created.token}</code>
             <Button type="button" variant="outline" onClick={() => void copy()}>
               复制
@@ -184,7 +184,7 @@ export default function TokensPage() {
           <CardDescription>国家和协议用逗号或空格分隔；留空表示不限制。</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={create}>
+          <form className="space-y-4" onSubmit={create}>
             <Label htmlFor="token-name">名称</Label>
             <Input
               id="token-name"

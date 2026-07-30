@@ -93,9 +93,9 @@ export default function ExportPage() {
 
   return (
     <>
-      <header>
-        <h1>订阅池与导出</h1>
-        <p>使用公开订阅池，或按条件下载节点列表。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">订阅池与导出</h1>
+        <p className="text-muted-foreground">使用公开订阅池，或按条件下载节点列表。</p>
       </header>
       {error && (
         <Alert variant="destructive">
@@ -108,9 +108,9 @@ export default function ExportPage() {
           <CardTitle>公开订阅池</CardTitle>
           <CardDescription>复制适合客户端的订阅地址。</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           {pools.map((pool) => (
-            <section key={pool.key}>
+            <section key={pool.key} className="space-y-2">
               <h2>{pool.title + " · " + pool.count + " 个节点"}</h2>
               <p>{pool.description}</p>
               {(["raw", "base64", "clash"] as const).map((format) => {
@@ -135,7 +135,7 @@ export default function ExportPage() {
           <CardTitle>临时导出</CardTitle>
           <CardDescription>导出接口需要登录，浏览器会附带当前会话凭证。</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <Label htmlFor="export-limit">数量上限</Label>
           <Input
             id="export-limit"

@@ -106,9 +106,9 @@ export default function UsersPage() {
 
   return (
     <>
-      <header>
-        <h1>用户</h1>
-        <p>管理本地用户与角色。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">用户</h1>
+        <p className="text-muted-foreground">管理本地用户与角色。</p>
       </header>
       {error && (
         <Alert variant="destructive">
@@ -122,7 +122,7 @@ export default function UsersPage() {
           <CardDescription>密码至少为 12 个字符。</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={create}>
+          <form className="space-y-4" onSubmit={create}>
             <Label htmlFor="user-name">用户名</Label>
             <Input
               id="user-name"

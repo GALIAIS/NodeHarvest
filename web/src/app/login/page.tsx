@@ -60,9 +60,9 @@ export default function LoginPage() {
 
   return (
     <>
-      <header>
-        <h1>管理登录</h1>
-        <p>管理面仅支持账户与密码登录；订阅 Token 不能登录控制台。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">管理登录</h1>
+        <p className="text-muted-foreground">管理面仅支持账户与密码登录；订阅 Token 不能登录控制台。</p>
       </header>
       {error && (
         <Alert variant="destructive">
@@ -76,7 +76,7 @@ export default function LoginPage() {
           <CardDescription>使用租户隔离的 RBAC 会话。</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={login}>
+          <form className="space-y-4" onSubmit={login}>
             <Label htmlFor="tenant">租户</Label>
             <Input
               id="tenant"

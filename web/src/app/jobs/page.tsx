@@ -110,9 +110,9 @@ export default function JobsPage() {
 
   return (
     <>
-      <header>
-        <h1>任务中心</h1>
-        <p>查看运行记录、队列和任务事件。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">任务中心</h1>
+        <p className="text-muted-foreground">查看运行记录、队列和任务事件。</p>
       </header>
       {error && (
         <Alert variant="destructive">

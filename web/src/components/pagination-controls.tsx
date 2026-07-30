@@ -20,8 +20,10 @@ export function PaginationControls({
   disabled?: boolean;
 }) {
   return (
-    <section aria-label="分页">
-      <p>第 {page} 页 · 当前 {count} 条{total !== undefined ? " / 共 " + total + " 条" : ""}</p>
+    <section className="flex flex-wrap items-center gap-2" aria-label="分页">
+      <p className="mr-auto text-sm text-muted-foreground">
+        第 {page} 页 · 当前 {count} 条{total !== undefined ? " / 共 " + total + " 条" : ""}
+      </p>
       <Button size="sm" variant="outline" onClick={onPrevious} disabled={disabled || page === 1}>
         上一页
       </Button>

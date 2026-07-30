@@ -7,10 +7,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <SessionProvider>
       <LiveProvider>
-        <Sidebar />
-        <main>
-          <AccessGate>{children}</AccessGate>
-        </main>
+        <div className="min-h-screen bg-background">
+          <Sidebar />
+          <main className="container mx-auto max-w-7xl space-y-6 px-4 py-6 md:px-6">
+            <AccessGate>{children}</AccessGate>
+          </main>
+        </div>
       </LiveProvider>
     </SessionProvider>
   );

@@ -68,9 +68,9 @@ export default function DashboardPage() {
 
   return (
     <>
-      <header>
-        <h1>仪表盘</h1>
-        <p>节点、采集源与任务的当前状态。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">仪表盘</h1>
+        <p className="text-muted-foreground">节点、采集源与任务的当前状态。</p>
       </header>
       {error && (
         <Alert variant="destructive">
@@ -84,19 +84,31 @@ export default function DashboardPage() {
           <CardDescription>{snapshot?.updated_at ? "更新时间 " + formatTime(snapshot.updated_at) : "正在加载…"}</CardDescription>
         </CardHeader>
         <CardContent>
-          <dl>
-            <dt>节点总数</dt>
-            <dd>{stats?.total_nodes ?? "—"}</dd>
-            <dt>存活节点</dt>
-            <dd>{stats?.alive_nodes ?? "—"}</dd>
-            <dt>高质量节点</dt>
-            <dd>{stats?.high_quality ?? "—"}</dd>
-            <dt>平均延迟</dt>
-            <dd>{formatMs(stats?.avg_latency_ms)}</dd>
-            <dt>启用采集源</dt>
-            <dd>{stats?.sources_enabled ?? "—"}</dd>
-            <dt>发布状态</dt>
-            <dd>{snapshot?.health.publish_fresh ? "最新" : "待更新"}</dd>
+          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="space-y-1">
+              <dt className="text-sm text-muted-foreground">节点总数</dt>
+              <dd className="text-2xl font-bold">{stats?.total_nodes ?? "—"}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-sm text-muted-foreground">存活节点</dt>
+              <dd className="text-2xl font-bold">{stats?.alive_nodes ?? "—"}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-sm text-muted-foreground">高质量节点</dt>
+              <dd className="text-2xl font-bold">{stats?.high_quality ?? "—"}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-sm text-muted-foreground">平均延迟</dt>
+              <dd className="text-2xl font-bold">{formatMs(stats?.avg_latency_ms)}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-sm text-muted-foreground">启用采集源</dt>
+              <dd className="text-2xl font-bold">{stats?.sources_enabled ?? "—"}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-sm text-muted-foreground">发布状态</dt>
+              <dd className="text-2xl font-bold">{snapshot?.health.publish_fresh ? "最新" : "待更新"}</dd>
+            </div>
           </dl>
         </CardContent>
       </Card>

@@ -25,9 +25,9 @@ export default function TermsPage() {
 
   return (
     <>
-      <header>
-        <h1>合规</h1>
-        <p>使用 NodeHarvest 前请阅读相关说明。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">合规</h1>
+        <p className="text-muted-foreground">使用 NodeHarvest 前请阅读相关说明。</p>
       </header>
       {error && (
         <Alert variant="destructive">
@@ -40,7 +40,7 @@ export default function TermsPage() {
           <CardTitle>{terms?.title ?? "使用条款"}</CardTitle>
           <CardDescription>{terms?.notice ?? "正在加载…"}</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <p>{terms?.restrictions.join("；") ?? ""}</p>
           {terms?.terms_url && (
             <Button asChild variant="outline">

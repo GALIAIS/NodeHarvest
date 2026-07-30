@@ -46,17 +46,19 @@ export function JobActions({
   }
 
   return (
-    <section aria-label="任务操作">
-      {actions.map((action) => (
-        <Button
-          key={action.kind}
-          variant={action.variant}
-          disabled={disabled || loading !== null}
-          onClick={() => run(action.kind)}
-        >
-          {loading === action.kind ? "正在启动…" : action.label}
-        </Button>
-      ))}
+    <section className="space-y-4" aria-label="任务操作">
+      <div className="flex flex-wrap gap-2">
+        {actions.map((action) => (
+          <Button
+            key={action.kind}
+            variant={action.variant}
+            disabled={disabled || loading !== null}
+            onClick={() => run(action.kind)}
+          >
+            {loading === action.kind ? "正在启动…" : action.label}
+          </Button>
+        ))}
+      </div>
       {error && (
         <Alert variant="destructive">
           <AlertTitle>任务未启动</AlertTitle>

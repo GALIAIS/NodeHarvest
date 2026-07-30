@@ -107,9 +107,9 @@ export default function NodesPage() {
 
   return (
     <>
-      <header>
-        <h1>节点库</h1>
-        <p>共 {total} 个节点。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">节点库</h1>
+        <p className="text-muted-foreground">共 {total} 个节点。</p>
       </header>
       {error && (
         <Alert variant="destructive">
@@ -122,7 +122,7 @@ export default function NodesPage() {
           <CardTitle>筛选</CardTitle>
           <CardDescription>筛选条件会立即应用。</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <Label htmlFor="node-query">搜索</Label>
           <Input
             id="node-query"

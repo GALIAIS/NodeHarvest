@@ -67,9 +67,9 @@ export default function AIPage() {
 
   return (
     <>
-      <header>
-        <h1>AI 可达</h1>
-        <p>查看目标站点和节点的可达性。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">AI 可达</h1>
+        <p className="text-muted-foreground">查看目标站点和节点的可达性。</p>
       </header>
       {error && (
         <Alert variant="destructive">

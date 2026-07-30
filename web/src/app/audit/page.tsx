@@ -101,9 +101,9 @@ export default function AuditPage() {
 
   return (
     <>
-      <header>
-        <h1>审计</h1>
-        <p>查询并导出当前租户的操作记录。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">审计</h1>
+        <p className="text-muted-foreground">查询并导出当前租户的操作记录。</p>
       </header>
       {error && (
         <Alert variant="destructive">
@@ -116,7 +116,7 @@ export default function AuditPage() {
           <CardTitle>筛选</CardTitle>
           <CardDescription>关键字仅筛选当前已加载结果。</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <Label htmlFor="audit-from">开始日期</Label>
           <Input
             id="audit-from"

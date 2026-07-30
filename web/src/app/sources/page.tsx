@@ -101,9 +101,9 @@ export default function SourcesPage() {
 
   return (
     <>
-      <header>
-        <h1>采集源</h1>
-        <p>管理订阅源的可用性和贡献。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">采集源</h1>
+        <p className="text-muted-foreground">管理订阅源的可用性和贡献。</p>
       </header>
       {error && (
         <Alert variant="destructive">
@@ -116,7 +116,7 @@ export default function SourcesPage() {
           <CardTitle>排序</CardTitle>
           <CardDescription>选择用于排列采集源的指标。</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-wrap gap-2">
           {sortOptions.map((option) => (
             <Button
               key={option}

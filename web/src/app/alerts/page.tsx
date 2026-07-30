@@ -81,9 +81,9 @@ export default function AlertsPage() {
 
   return (
     <>
-      <header>
-        <h1>异常告警</h1>
-        <p>确认或解决当前异常。</p>
+      <header className="space-y-1">
+        <h1 className="text-3xl font-bold tracking-tight">异常告警</h1>
+        <p className="text-muted-foreground">确认或解决当前异常。</p>
       </header>
       {error && (
         <Alert variant="destructive">
@@ -96,7 +96,7 @@ export default function AlertsPage() {
           <CardTitle>筛选</CardTitle>
           <CardDescription>选择显示活动告警或全部告警。</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-wrap gap-2">
           <Button
             type="button"
             variant={activeOnly ? "secondary" : "outline"}
@@ -123,7 +123,7 @@ export default function AlertsPage() {
             <CardTitle>{alert.message}</CardTitle>
             <CardDescription>{alert.kind + " · " + formatTime(alert.created_at)}</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <Badge variant={alert.severity === "critical" ? "destructive" : "secondary"}>
               {alert.severity}
             </Badge>

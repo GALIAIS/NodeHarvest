@@ -154,9 +154,9 @@ export default function SystemPage() {
 
   return (
     <>
-      <header>
-        <h1>系统</h1>
-        <p>查看服务状态与运行时配置。</p>
+      <header className="space-y-3">
+        <h1 className="text-3xl font-bold tracking-tight">系统</h1>
+        <p className="text-muted-foreground">查看服务状态与运行时配置。</p>
         <Button type="button" variant="outline" onClick={() => void load()}>
           刷新
         </Button>
@@ -177,24 +177,36 @@ export default function SystemPage() {
         <CardHeader>
           <CardTitle>运行状态</CardTitle>
         </CardHeader>
-        <CardContent>
-          <dl>
-            <dt>版本</dt>
-            <dd>{health?.version ?? "—"}</dd>
-            <dt>运行时间</dt>
-            <dd>{formatDuration(health?.uptime_sec)}</dd>
-            <dt>数据库</dt>
-            <dd>{String(database.driver ?? "—") + " · " + (health?.database.ok ? "正常" : "不可用")}</dd>
-            <dt>Redis</dt>
-            <dd>{redis.enabled ? (health?.redis.ok ? "正常" : "异常") : "未启用"}</dd>
-            <dt>队列</dt>
-            <dd>{queue.enabled ? "已启用" : "未启用"}</dd>
-            <dt>就绪</dt>
-            <dd>
-              <Badge variant={ready?.ready ? "default" : "destructive"}>
-                {ready ? (ready.ready ? "就绪" : "未就绪") : "加载中"}
-              </Badge>
-            </dd>
+        <CardContent className="space-y-4">
+          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="space-y-1">
+              <dt className="text-sm text-muted-foreground">版本</dt>
+              <dd className="font-medium">{health?.version ?? "—"}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-sm text-muted-foreground">运行时间</dt>
+              <dd className="font-medium">{formatDuration(health?.uptime_sec)}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-sm text-muted-foreground">数据库</dt>
+              <dd className="font-medium">{String(database.driver ?? "—") + " · " + (health?.database.ok ? "正常" : "不可用")}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-sm text-muted-foreground">Redis</dt>
+              <dd className="font-medium">{redis.enabled ? (health?.redis.ok ? "正常" : "异常") : "未启用"}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-sm text-muted-foreground">队列</dt>
+              <dd className="font-medium">{queue.enabled ? "已启用" : "未启用"}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="text-sm text-muted-foreground">就绪</dt>
+              <dd>
+                <Badge variant={ready?.ready ? "default" : "destructive"}>
+                  {ready ? (ready.ready ? "就绪" : "未就绪") : "加载中"}
+                </Badge>
+              </dd>
+            </div>
           </dl>
           {ready && !ready.ready && <p>{ready.reasons.join("；")}</p>}
         </CardContent>
@@ -210,7 +222,7 @@ export default function SystemPage() {
           ) : authenticated && !canAdmin ? (
             <AuthRequired reason="forbidden" title="需要 admin 角色" />
           ) : (
-            <form onSubmit={save}>
+            <form className="space-y-4" onSubmit={save}>
               <Label htmlFor="publish-score">发布最低评分</Label>
               <Input
                 id="publish-score"
