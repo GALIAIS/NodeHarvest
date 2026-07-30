@@ -1,44 +1,36 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
-import {
-  Activity,
-  AlertTriangle,
-  CheckCircle2,
-  Database,
-  GitCommitHorizontal,
-  RefreshCw,
-  Save,
-  ServerCog,
-} from "lucide-react";
-import {
-  api,
-  errorMessage,
-  isAuthError,
-  isForbidden,
-  isUnauthenticated,
-  type ConfigVersion,
-  type Health,
-} from "@/lib/api";
+import type { FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AuthRequired } from "@/components/auth-required";
-import { PageHeader } from "@/components/page-header";
-import { useSession } from "@/components/session-provider";
 import { useLiveRefresh } from "@/components/live-provider";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useSession } from "@/components/session-provider";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
   CardDescription,
-  CardEmpty,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Hint } from "@/components/ui/hint";
 import { Input } from "@/components/ui/input";
-import { Field, Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  api,
+  errorMessage,
+  type ConfigVersion,
+  type Health,
+} from "@/lib/api";
 import { formatDuration, formatTime } from "@/lib/utils";
 
 type RuntimeForm = {
@@ -55,7 +47,7 @@ type RuntimeForm = {
   dial_after_quality_max: string;
 };
 
-const empty: RuntimeForm = {
+const emptyForm: RuntimeForm = {
   publish_min_score: "",
   publish_max_nodes: "",
   publish_alive_only: true,
@@ -69,34 +61,31 @@ const empty: RuntimeForm = {
   dial_after_quality_max: "",
 };
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
 export default function SystemPage() {
-  const { authenticated, canAdmin, loading: sessionLoading } = useSession();
+  const { authenticated, loading, canAdmin } = useSession();
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [health, setHealth] = useState<Health | null>(null);
   const [ready, setReady] = useState<{ ready: boolean; reasons: string[] } | null>(null);
   const [versions, setVersions] = useState<ConfigVersion[]>([]);
-  const [form, setForm] = useState<RuntimeForm>(empty);
+  const [form, setForm] = useState<RuntimeForm>(emptyForm);
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  // 401/403 是会话或角色状态而非故障，单独记录以渲染 AuthRequired 而非报错横幅。
-  // 会话可能在页面停留期间过期，所以即便 canAdmin 为 true 也要处理。
-  const [authError, setAuthError] = useState<"anonymous" | "forbidden" | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [cfg, healthState, readyState] = await Promise.all([
-        api.config(),
-        api.health(),
-        api.ready(),
-      ]);
-      const publish = (cfg.publish || {}) as Record<string, unknown>;
-      const governance = (cfg.governance || {}) as Record<string, unknown>;
-      const dial = (cfg.dial || {}) as Record<string, unknown>;
-      setConfig(cfg);
-      setHealth(healthState);
-      setReady(readyState);
+      const [nextConfig, nextHealth, nextReady] = await Promise.all([api.config(), api.health(), api.ready()]);
+      const publish = record(nextConfig.publish);
+      const governance = record(nextConfig.governance);
+      const dial = record(nextConfig.dial);
+      setConfig(nextConfig);
+      setHealth(nextHealth);
+      setReady(nextReady);
       setForm({
         publish_min_score: String(publish.min_score ?? ""),
         publish_max_nodes: String(publish.max_nodes ?? ""),
@@ -112,432 +101,271 @@ export default function SystemPage() {
       });
       setError("");
     } catch (cause) {
-      if (!isAuthError(cause)) setError(errorMessage(cause, "加载失败"));
+      setError(errorMessage(cause, "加载系统状态失败"));
     }
-    // Version history is admin-only; fetch it separately so its failure
-    // never clears the public config/health/ready state above.
+
     if (!canAdmin) {
       setVersions([]);
-      setAuthError(null);
       return;
     }
     try {
       setVersions(await api.configVersions());
-      setAuthError(null);
     } catch (cause) {
-      if (isAuthError(cause)) {
-        // 会话过期或角色被降级：清空过期的版本列表并展示对应的登录/权限提示。
-        setVersions([]);
-        setAuthError(isForbidden(cause) ? "forbidden" : "anonymous");
-      } else {
-        setError(errorMessage(cause, "加载失败"));
-      }
+      setError(errorMessage(cause, "加载配置版本失败"));
     }
   }, [canAdmin]);
 
   useEffect(() => {
-    const initial = setTimeout(load, 0);
-    return () => clearTimeout(initial);
+    const initial = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(initial);
   }, [load]);
 
   useLiveRefresh(load, authenticated);
 
-  function field<K extends keyof RuntimeForm>(key: K, value: RuntimeForm[K]) {
+  function update<K extends keyof RuntimeForm>(key: K, value: RuntimeForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  async function save(event: FormEvent) {
+  async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (confirm !== "APPLY") {
-      setError("请输入 APPLY 确认运行时配置变更");
+      setError("请输入 APPLY 确认变更。");
       return;
     }
     setBusy(true);
-    setError("");
-    setMessage("");
-    setAuthError(null);
-    const patch = Object.fromEntries(
-      Object.entries(form).map(([key, value]) => [
-        key,
-        typeof value === "boolean" ? value : Number(value),
-      ]),
-    );
     try {
+      const patch = Object.fromEntries(
+        Object.entries(form).map(([key, value]) => [key, typeof value === "boolean" ? value : Number(value)]),
+      );
       const result = await api.updateConfig(patch);
-      setMessage(`配置版本 ${result.version.id} 已应用并写入审计`);
+      setMessage("配置版本 " + result.version.id + " 已应用。");
       setConfirm("");
       await load();
     } catch (cause) {
-      if (isUnauthenticated(cause)) setAuthError("anonymous");
-      else if (isForbidden(cause)) setAuthError("forbidden");
-      else setError(errorMessage(cause, "保存失败"));
+      setError(errorMessage(cause, "保存配置失败"));
     } finally {
       setBusy(false);
     }
   }
 
-  const database = (config.database || {}) as Record<string, unknown>;
-  const redis = (config.redis || {}) as Record<string, unknown>;
-  const queue = (config.queue || {}) as Record<string, unknown>;
-  const auth = (config.auth || {}) as Record<string, unknown>;
-  const observability = (config.observability || {}) as Record<string, unknown>;
+  const database = record(config.database);
+  const redis = record(config.redis);
+  const queue = record(config.queue);
 
   return (
-    <div className="flex flex-1 flex-col">
-      <PageHeader
-        eyebrow="Runtime control plane"
-        title="系统与热配置"
-        description="查看依赖、就绪状态、版本与运行时安全项。监听地址、数据库、凭证和拓扑变更仍需滚动重启。"
-        actions={
-          <Button size="sm" variant="secondary" onClick={load}>
-            <RefreshCw className="size-3.5" />
-            刷新
-          </Button>
-        }
-      />
-      <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Card>
-            <CardContent className="p-4">
-              <Database className="mb-3 size-4 text-primary" />
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                Database
-              </p>
-              <p className="mt-1 text-sm text-foreground">
-                {String(database.driver || "—")} · {health?.database.ok ? "healthy" : "unavailable"}
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <ServerCog className="mb-3 size-4 text-accent" />
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                Redis / Queue
-              </p>
-              <p className="mt-1 text-sm text-foreground">
-                {redis.enabled ? "Redis on" : "Redis off"} ·{" "}
-                {queue.enabled ? `${queue.embedded_workers || 0} embedded` : "queue off"}
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <Activity className="mb-3 size-4 text-success" />
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                Readiness
-              </p>
-              <p className="mt-1 text-sm text-foreground">
-                {ready?.ready ? "Ready to serve" : "Not ready"}
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <GitCommitHorizontal className="mb-3 size-4 text-destructive" />
-              <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                Version / Uptime
-              </p>
-              <p className="mt-1 text-sm text-foreground">
-                {health?.version || "—"} · {formatDuration(health?.uptime_sec)}
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {ready && !ready.ready && (
-          <Alert variant="danger">
-            <AlertTriangle />
-            <AlertDescription>{ready.reasons.join(" · ")}</AlertDescription>
-          </Alert>
-        )}
-        {error && (
-          <Alert variant="danger">
-            <AlertTriangle />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-        {authError && (
-          <AuthRequired
-            reason={authError}
-            title={authError === "forbidden" ? "需要 admin 角色" : "登录状态已失效"}
-            description={
-              authError === "forbidden"
-                ? "运行时配置的变更需要管理员权限，请联系管理员调整角色。"
-                : "会话已过期，请重新登录后再操作。"
-            }
-          />
-        )}
-        {message && (
-          <Alert variant="success" role="status">
-            <CheckCircle2 />
-            <AlertDescription>{message}</AlertDescription>
-          </Alert>
-        )}
-
-        <div className="grid gap-4 xl:grid-cols-[1.25fr_.75fr]">
-          <Card>
-            <CardHeader>
-              <CardTitle>运行时配置</CardTitle>
-              <CardDescription>保存后立即生效、写入数据库版本并刷新订阅缓存。</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {!authenticated && !sessionLoading ? (
-                <AuthRequired
-                  compact
-                  title="需要登录后修改"
-                  description="运行时配置的变更会写入审计与配置版本。"
-                />
-              ) : authenticated && !canAdmin ? (
-                <AuthRequired
-                  compact
-                  reason="forbidden"
-                  title="需要 admin 角色"
-                  description="运行时配置的变更会写入审计与配置版本。"
-                />
-              ) : (
-              <form onSubmit={save} className="space-y-6">
-                <fieldset>
-                  <legend className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-primary">
-                    Publish policy
-                  </legend>
-                  <div className="control-grid">
-                    <Field label="最低评分" htmlFor="publish_min_score">
-                      <Input
-                        id="publish_min_score"
-                        type="number"
-                        min="0"
-                        max="100"
-                        value={form.publish_min_score}
-                        onChange={(e) => field("publish_min_score", e.target.value)}
-                        disabled={!canAdmin}
-                      />
-                    </Field>
-                    <Field label="最多节点" htmlFor="publish_max_nodes">
-                      <Input
-                        id="publish_max_nodes"
-                        type="number"
-                        min="1"
-                        max="100000"
-                        value={form.publish_max_nodes}
-                        onChange={(e) => field("publish_max_nodes", e.target.value)}
-                        disabled={!canAdmin}
-                      />
-                    </Field>
-                    <Field label="缓存秒数" htmlFor="publish_cache_sec">
-                      <Input
-                        id="publish_cache_sec"
-                        type="number"
-                        min="0"
-                        max="86400"
-                        value={form.publish_cache_sec}
-                        onChange={(e) => field("publish_cache_sec", e.target.value)}
-                        disabled={!canAdmin}
-                      />
-                    </Field>
-                    <Field label="最大节点年龄（小时）" htmlFor="publish_max_node_age_hours">
-                      <Input
-                        id="publish_max_node_age_hours"
-                        type="number"
-                        min="1"
-                        max="8760"
-                        value={form.publish_max_node_age_hours}
-                        onChange={(e) => field("publish_max_node_age_hours", e.target.value)}
-                        disabled={!canAdmin}
-                      />
-                    </Field>
-                  </div>
-                  <div className="mt-3 flex items-center gap-2">
-                    <Switch
-                      id="publish_alive_only"
-                      checked={form.publish_alive_only}
-                      onCheckedChange={(state) => field("publish_alive_only", state)}
-                      disabled={!canAdmin}
-                    />
-                    <Label htmlFor="publish_alive_only">仅发布存活节点</Label>
-                  </div>
-                </fieldset>
-
-                <fieldset>
-                  <legend className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-accent">
-                    Governance thresholds
-                  </legend>
-                  <div className="control-grid">
-                    <Field label="连续失败停源" htmlFor="governance_disable_after_failures">
-                      <Input
-                        id="governance_disable_after_failures"
-                        type="number"
-                        min="1"
-                        max="100"
-                        value={form.governance_disable_after_failures}
-                        onChange={(e) => field("governance_disable_after_failures", e.target.value)}
-                        disabled={!canAdmin}
-                      />
-                    </Field>
-                    <Field label="冷却小时" htmlFor="governance_cooldown_hours">
-                      <Input
-                        id="governance_cooldown_hours"
-                        type="number"
-                        min="1"
-                        max="720"
-                        value={form.governance_cooldown_hours}
-                        onChange={(e) => field("governance_cooldown_hours", e.target.value)}
-                        disabled={!canAdmin}
-                      />
-                    </Field>
-                    <Field label="HQ 骤降阈值 %" htmlFor="governance_hq_drop_percent">
-                      <Input
-                        id="governance_hq_drop_percent"
-                        type="number"
-                        min="1"
-                        max="100"
-                        value={form.governance_hq_drop_percent}
-                        onChange={(e) => field("governance_hq_drop_percent", e.target.value)}
-                        disabled={!canAdmin}
-                      />
-                    </Field>
-                    <Field label="单国家占比阈值 %" htmlFor="governance_country_share_percent">
-                      <Input
-                        id="governance_country_share_percent"
-                        type="number"
-                        min="1"
-                        max="100"
-                        value={form.governance_country_share_percent}
-                        onChange={(e) => field("governance_country_share_percent", e.target.value)}
-                        disabled={!canAdmin}
-                      />
-                    </Field>
-                  </div>
-                </fieldset>
-
-                <fieldset>
-                  <legend className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-success">
-                    Real protocol verification
-                  </legend>
-                  <div className="flex flex-wrap items-end gap-4">
-                    <div className="flex items-center gap-2 pb-3">
-                      <Switch
-                        id="dial_after_quality"
-                        checked={form.dial_after_quality}
-                        onCheckedChange={(state) => field("dial_after_quality", state)}
-                        disabled={!canAdmin}
-                      />
-                      <Label htmlFor="dial_after_quality">质量任务后抽样真实拨测</Label>
-                    </div>
-                    <Field
-                      label="每次最多节点"
-                      htmlFor="dial_after_quality_max"
-                      className="min-w-48 flex-1"
-                    >
-                      <Input
-                        id="dial_after_quality_max"
-                        type="number"
-                        min="0"
-                        max="100000"
-                        value={form.dial_after_quality_max}
-                        onChange={(e) => field("dial_after_quality_max", e.target.value)}
-                        disabled={!canAdmin}
-                      />
-                    </Field>
-                  </div>
-                </fieldset>
-
-                <div className="flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-end">
-                  <Field
-                    label={<span className="text-destructive">输入 APPLY 确认变更</span>}
-                    htmlFor="confirm-apply"
-                    className="min-w-0 flex-1"
-                  >
-                    <Input
-                      id="confirm-apply"
-                      className="border-destructive/40"
-                      value={confirm}
-                      onChange={(e) => setConfirm(e.target.value)}
-                      autoComplete="off"
-                      disabled={!canAdmin}
-                    />
-                  </Field>
-                  <Hint content="需要 admin 角色才能应用配置" disabled={!canAdmin}>
-                    <Button
-                      type="submit"
-                      variant="destructive"
-                      disabled={busy || confirm !== "APPLY" || !canAdmin}
-                    >
-                      <Save className="size-4" /> {busy ? "应用中…" : "应用配置"}
-                    </Button>
-                  </Hint>
-                </div>
-              </form>
-              )}
-            </CardContent>
-          </Card>
-
-          <div className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>运行能力</CardTitle>
-                <CardDescription>仅显示状态，不返回密钥或 DSN。</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-2 text-xs">
-                {[
-                  ["本地登录", auth.local_enabled],
-                  ["OpenTelemetry", observability.otel_enabled],
-                  ["GeoIP", health?.geo_mmdb],
-                  ["发布缓存", health?.publish_fresh],
-                ].map(([label, value]) => (
-                  <div
-                    key={String(label)}
-                    className="flex items-center justify-between border-b border-border/60 py-2 last:border-0"
-                  >
-                    <span className="text-muted-foreground">{String(label)}</span>
-                    <Badge variant={value ? "success" : "secondary"}>{value ? "ON" : "OFF"}</Badge>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>配置版本</CardTitle>
-                <CardDescription>最近 50 次确认后的热更新。</CardDescription>
-              </CardHeader>
-              <CardContent className="max-h-[34rem] space-y-3 overflow-y-auto">
-                {!authenticated && !sessionLoading && (
-                  <AuthRequired compact title="需要登录" description="配置版本历史属于管理面。" />
-                )}
-                {authenticated && !canAdmin && (
-                  <AuthRequired
-                    compact
-                    reason="forbidden"
-                    title="需要 admin 角色"
-                    description="配置版本历史仅对管理员开放。"
-                  />
-                )}
+    <>
+      <header>
+        <h1>系统</h1>
+        <p>查看服务状态与运行时配置。</p>
+        <Button type="button" variant="outline" onClick={() => void load()}>
+          刷新
+        </Button>
+      </header>
+      {error && (
+        <Alert variant="destructive">
+          <AlertTitle>系统操作失败</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      {message && (
+        <Alert>
+          <AlertTitle>配置已应用</AlertTitle>
+          <AlertDescription>{message}</AlertDescription>
+        </Alert>
+      )}
+      <Card>
+        <CardHeader>
+          <CardTitle>运行状态</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <dl>
+            <dt>版本</dt>
+            <dd>{health?.version ?? "—"}</dd>
+            <dt>运行时间</dt>
+            <dd>{formatDuration(health?.uptime_sec)}</dd>
+            <dt>数据库</dt>
+            <dd>{String(database.driver ?? "—") + " · " + (health?.database.ok ? "正常" : "不可用")}</dd>
+            <dt>Redis</dt>
+            <dd>{redis.enabled ? (health?.redis.ok ? "正常" : "异常") : "未启用"}</dd>
+            <dt>队列</dt>
+            <dd>{queue.enabled ? "已启用" : "未启用"}</dd>
+            <dt>就绪</dt>
+            <dd>
+              <Badge variant={ready?.ready ? "default" : "destructive"}>
+                {ready ? (ready.ready ? "就绪" : "未就绪") : "加载中"}
+              </Badge>
+            </dd>
+          </dl>
+          {ready && !ready.ready && <p>{ready.reasons.join("；")}</p>}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>运行时配置</CardTitle>
+          <CardDescription>保存后立即生效并写入配置版本。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!authenticated && !loading ? (
+            <AuthRequired title="需要登录后修改配置" />
+          ) : authenticated && !canAdmin ? (
+            <AuthRequired reason="forbidden" title="需要 admin 角色" />
+          ) : (
+            <form onSubmit={save}>
+              <Label htmlFor="publish-score">发布最低评分</Label>
+              <Input
+                id="publish-score"
+                type="number"
+                min="0"
+                max="100"
+                value={form.publish_min_score}
+                onChange={(event) => update("publish_min_score", event.target.value)}
+              />
+              <Label htmlFor="publish-max-nodes">发布最多节点</Label>
+              <Input
+                id="publish-max-nodes"
+                type="number"
+                min="1"
+                max="100000"
+                value={form.publish_max_nodes}
+                onChange={(event) => update("publish_max_nodes", event.target.value)}
+              />
+              <Label htmlFor="publish-cache">发布缓存秒数</Label>
+              <Input
+                id="publish-cache"
+                type="number"
+                min="0"
+                max="86400"
+                value={form.publish_cache_sec}
+                onChange={(event) => update("publish_cache_sec", event.target.value)}
+              />
+              <Label htmlFor="publish-age">最大节点年龄（小时）</Label>
+              <Input
+                id="publish-age"
+                type="number"
+                min="1"
+                max="8760"
+                value={form.publish_max_node_age_hours}
+                onChange={(event) => update("publish_max_node_age_hours", event.target.value)}
+              />
+              <Button
+                type="button"
+                variant={form.publish_alive_only ? "secondary" : "outline"}
+                aria-pressed={form.publish_alive_only}
+                onClick={() => update("publish_alive_only", !form.publish_alive_only)}
+              >
+                仅发布存活节点
+              </Button>
+              <Label htmlFor="governance-failures">连续失败停源阈值</Label>
+              <Input
+                id="governance-failures"
+                type="number"
+                min="1"
+                max="100"
+                value={form.governance_disable_after_failures}
+                onChange={(event) => update("governance_disable_after_failures", event.target.value)}
+              />
+              <Label htmlFor="governance-cooldown">冷却小时</Label>
+              <Input
+                id="governance-cooldown"
+                type="number"
+                min="1"
+                max="720"
+                value={form.governance_cooldown_hours}
+                onChange={(event) => update("governance_cooldown_hours", event.target.value)}
+              />
+              <Label htmlFor="governance-drop">HQ 骤降阈值（%）</Label>
+              <Input
+                id="governance-drop"
+                type="number"
+                min="1"
+                max="100"
+                value={form.governance_hq_drop_percent}
+                onChange={(event) => update("governance_hq_drop_percent", event.target.value)}
+              />
+              <Label htmlFor="governance-country">单国家占比阈值（%）</Label>
+              <Input
+                id="governance-country"
+                type="number"
+                min="1"
+                max="100"
+                value={form.governance_country_share_percent}
+                onChange={(event) => update("governance_country_share_percent", event.target.value)}
+              />
+              <Button
+                type="button"
+                variant={form.dial_after_quality ? "secondary" : "outline"}
+                aria-pressed={form.dial_after_quality}
+                onClick={() => update("dial_after_quality", !form.dial_after_quality)}
+              >
+                质量任务后真实拨测
+              </Button>
+              <Label htmlFor="dial-max">每次最多拨测节点</Label>
+              <Input
+                id="dial-max"
+                type="number"
+                min="0"
+                max="100000"
+                value={form.dial_after_quality_max}
+                onChange={(event) => update("dial_after_quality_max", event.target.value)}
+              />
+              <Label htmlFor="config-confirm">输入 APPLY 确认</Label>
+              <Input
+                id="config-confirm"
+                value={confirm}
+                autoComplete="off"
+                onChange={(event) => setConfirm(event.target.value)}
+              />
+              <Button type="submit" variant="destructive" disabled={busy || confirm !== "APPLY"}>
+                {busy ? "应用中…" : "应用配置"}
+              </Button>
+            </form>
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>配置版本</CardTitle>
+          <CardDescription>最近的运行时配置变更。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {authenticated && canAdmin ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>版本</TableHead>
+                  <TableHead>操作人</TableHead>
+                  <TableHead>校验和</TableHead>
+                  <TableHead>时间</TableHead>
+                  <TableHead>变更</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {versions.map((version) => (
-                  <div key={version.id} className="border-l-2 border-border pl-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <code className="text-[10px] text-primary">{version.checksum.slice(0, 12)}</code>
-                      <span className="font-mono text-[9px] text-muted-foreground">
-                        {formatTime(version.created_at)}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{version.actor}</p>
-                    <details className="mt-1">
-                      <summary className="cursor-pointer text-[10px] text-muted-foreground">
-                        查看 patch
-                      </summary>
-                      <pre className="mt-2 overflow-auto border border-border bg-popover p-2 font-mono text-[9px] text-muted-foreground">
-                        {version.patch_json}
-                      </pre>
-                    </details>
-                  </div>
+                  <TableRow key={version.id}>
+                    <TableCell>{version.id}</TableCell>
+                    <TableCell>{version.actor}</TableCell>
+                    <TableCell>{version.checksum}</TableCell>
+                    <TableCell>{formatTime(version.created_at)}</TableCell>
+                    <TableCell>
+                      <details>
+                        <summary>查看</summary>
+                        <pre>{version.patch_json}</pre>
+                      </details>
+                    </TableCell>
+                  </TableRow>
                 ))}
-                {versions.length === 0 && canAdmin && (
-                  <CardEmpty>暂无热更新版本</CardEmpty>
+                {!versions.length && (
+                  <TableRow>
+                    <TableCell colSpan={5}>暂无配置版本。</TableCell>
+                  </TableRow>
                 )}
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      </div>
-    </div>
+              </TableBody>
+            </Table>
+          ) : (
+            <AuthRequired reason={authenticated ? "forbidden" : "anonymous"} title="配置版本需要 admin 权限" />
+          )}
+        </CardContent>
+      </Card>
+    </>
   );
 }

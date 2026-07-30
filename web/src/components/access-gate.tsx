@@ -16,9 +16,5 @@ export function AccessGate({ children }: { children: React.ReactNode }) {
 
   if (publicRoute || authenticated) return <>{children}</>;
 
-  return (
-    <div className="flex flex-1 items-center justify-center p-8 font-mono text-xs text-muted-foreground">
-      {loading ? "正在验证会话…" : "正在返回仪表盘…"}
-    </div>
-  );
+  return <p>{loading ? "正在验证会话…" : "正在返回仪表盘…"}</p>;
 }

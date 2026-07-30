@@ -1,218 +1,178 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Bot, Info } from "lucide-react";
+import { AuthRequired } from "@/components/auth-required";
+import { JobActions } from "@/components/job-actions";
+import { useLiveRefresh } from "@/components/live-provider";
+import { useSession } from "@/components/session-provider";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   api,
+  errorMessage,
   type AIProbeResult,
   type AITarget,
   type DashboardStats,
   type NodeItem,
 } from "@/lib/api";
-import { AuthRequired } from "@/components/auth-required";
-import { JobActions } from "@/components/job-actions";
-import { PageHeader } from "@/components/page-header";
-import { useSession } from "@/components/session-provider";
-import { useLiveRefresh } from "@/components/live-provider";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableEmpty,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { formatMs } from "@/lib/utils";
+import { formatMs, formatPercent } from "@/lib/utils";
 
 export default function AIPage() {
-  const { loading: sessionLoading, authenticated, canOperate } = useSession();
+  const { authenticated, canOperate } = useSession();
   const [targets, setTargets] = useState<AITarget[]>([]);
   const [hostAI, setHostAI] = useState<Record<string, AIProbeResult>>({});
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [nodes, setNodes] = useState<NodeItem[]>([]);
-  const [err, setErr] = useState<string | null>(null);
+  const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const [t, h, st, n] = await Promise.all([
+      const [nextTargets, nextHostAI, nextStats, page] = await Promise.all([
         api.aiTargets(),
         api.hostAI(),
         api.stats(),
-        api.nodes({ limit: 50, alive: true, min_score: 55 }),
+        api.nodes({ limit: 100, alive: true, min_score: 55 }),
       ]);
-      setTargets(t);
-      setHostAI(h);
-      setStats(st);
-      setNodes(n.nodes.filter((x) => x.ai_access && Object.keys(x.ai_access).length > 0));
-      setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "加载失败");
+      setTargets(nextTargets);
+      setHostAI(nextHostAI);
+      setStats(nextStats);
+      setNodes(page.nodes.filter((node) => Object.keys(node.ai_access ?? {}).length > 0));
+      setError("");
+    } catch (cause) {
+      setError(errorMessage(cause, "加载 AI 可达性失败"));
     }
   }, []);
 
   useEffect(() => {
-    const initial = setTimeout(load, 0);
-    return () => {
-      clearTimeout(initial);
-    };
+    const initial = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(initial);
   }, [load]);
 
   useLiveRefresh(load, authenticated);
 
   return (
-    <div className="flex flex-1 flex-col">
-      <PageHeader
-        eyebrow="AI reachability matrix"
-        title="AI 站点可达"
-        description="ChatGPT、Gemini、Claude、Grok 等目标的本机边缘状态与节点代理可达矩阵。"
-      />
-
-      <div className="reveal space-y-4 p-4 sm:p-6 lg:p-8">
-        <Alert variant="warn" role="note">
-          <Info />
-          <AlertDescription>
-            <p>
-              <strong>真实代理测 AI</strong>：把节点导入 xray/sing-box 本地 SOCKS5，然后设置环境变量{" "}
-              <code className="border border-border bg-popover px-1 font-mono">
-                NODE_HARVEST_SOCKS5=127.0.0.1:1080
-              </code>{" "}
-              或在任务 body 传{" "}
-              <code className="border border-border bg-popover px-1 font-mono">socks5</code>。
-            </p>
-            <p className="opacity-70">
-              无 SOCKS5 时使用<strong>启发模式</strong>：节点质量 + 本机到 AI
-              边缘连通性，用于筛选候选，不保证经节点可访问。
-            </p>
-          </AlertDescription>
+    <>
+      <header>
+        <h1>AI 可达</h1>
+        <p>查看目标站点和节点的可达性。</p>
+      </header>
+      {error && (
+        <Alert variant="destructive">
+          <AlertTitle>加载失败</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
         </Alert>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>运行 AI 探测</CardTitle>
-            <CardDescription>建议先测速再 AI 探测，或直接一键全流程</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {sessionLoading || canOperate ? (
-              <JobActions onStarted={() => load()} />
-            ) : authenticated ? (
-              // 已登录但角色不足：不能再引导去登录页，那只会绕回来
-              <AuthRequired
-                compact
-                reason="forbidden"
-                title="当前角色无法运行任务"
-                description="AI 探测任务需要 operator 及以上权限。"
-              />
-            ) : (
-              <AuthRequired
-                compact
-                title="需要登录后运行任务"
-                description="AI 探测任务需要 operator 及以上权限。"
-              />
-            )}
-          </CardContent>
-        </Card>
-
-        {err && (
-          <Alert variant="danger">
-            <AlertTriangle />
-            <AlertDescription>{err}</AlertDescription>
-          </Alert>
-        )}
-
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {targets.map((t) => {
-            const host = hostAI[t.key];
-            const pass = stats?.ai_pass_rate?.[t.key];
-            return (
-              <Card key={t.key}>
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center gap-2 text-sm">
-                    <Bot className="size-4 text-primary" />
-                    {t.name}
-                  </CardTitle>
-                  <CardDescription className="truncate font-mono text-[10px]">
-                    {t.host}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">本机直连</span>
-                    <Badge variant={host?.ok ? "success" : "danger"}>
-                      {host ? (host.ok ? "OK" : "FAIL") : "未测"}
-                    </Badge>
-                  </div>
-                  {host && (
-                    <div className="font-mono text-xs text-muted-foreground">
-                      {formatMs(host.latency_ms)}
-                      {host.status_code ? ` · HTTP ${host.status_code}` : ""}
-                      {host.error ? ` · ${host.error}` : ""}
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">节点通过率</span>
-                    <span className="font-mono tabular-nums text-accent">
-                      {pass != null ? `${Math.round(pass * 100)}%` : "—"}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>节点 AI 矩阵（样本）</CardTitle>
-            <CardDescription>已做过 AI 探测的存活节点</CardDescription>
-          </CardHeader>
-          <CardContent className="px-0 pb-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>节点</TableHead>
-                  <TableHead>分数</TableHead>
-                  {targets.map((t) => (
-                    <TableHead key={t.key}>{t.key}</TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {nodes.slice(0, 40).map((n) => (
-                  <TableRow key={n.id}>
-                    <TableCell className="max-w-40 truncate">{n.name}</TableCell>
-                    <TableCell className="font-mono tabular-nums text-accent">
-                      {n.score?.toFixed?.(1)}
+      )}
+      <Card>
+        <CardHeader>
+          <CardTitle>运行探测</CardTitle>
+          <CardDescription>需要 operator 或 admin 权限。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {authenticated && canOperate ? (
+            <JobActions onStarted={() => void load()} />
+          ) : (
+            <AuthRequired
+              reason={authenticated ? "forbidden" : "anonymous"}
+              title={authenticated ? "当前角色无法运行任务" : "登录后可运行探测"}
+            />
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>目标状态</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>目标</TableHead>
+                <TableHead>主机</TableHead>
+                <TableHead>本机状态</TableHead>
+                <TableHead>本机延迟</TableHead>
+                <TableHead>节点通过率</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {targets.map((target) => {
+                const result = hostAI[target.key];
+                return (
+                  <TableRow key={target.key}>
+                    <TableCell>{target.name}</TableCell>
+                    <TableCell>{target.host}</TableCell>
+                    <TableCell>
+                      <Badge variant={result?.ok ? "default" : "secondary"}>
+                        {result ? (result.ok ? "可达" : "不可达") : "未测试"}
+                      </Badge>
                     </TableCell>
-                    {targets.map((t) => {
-                      const r = n.ai_access?.[t.key];
-                      return (
-                        <TableCell key={t.key}>
-                          {r ? (
-                            <Badge variant={r.ok ? "success" : "secondary"}>
-                              {r.ok ? "✓" : "×"}
-                            </Badge>
-                          ) : (
-                            <span className="text-muted-foreground">·</span>
-                          )}
-                        </TableCell>
-                      );
-                    })}
+                    <TableCell>{formatMs(result?.latency_ms)}</TableCell>
+                    <TableCell>{formatPercent(stats?.ai_pass_rate[target.key])}</TableCell>
                   </TableRow>
+                );
+              })}
+              {!targets.length && (
+                <TableRow>
+                  <TableCell colSpan={5}>暂无 AI 目标。</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>节点探测结果</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>节点</TableHead>
+                <TableHead>评分</TableHead>
+                {targets.map((target) => (
+                  <TableHead key={target.key}>{target.key}</TableHead>
                 ))}
-                {nodes.length === 0 && (
-                  <TableEmpty colSpan={2 + targets.length} icon={Bot}>
-                    暂无 AI 探测数据，请运行 AI 探测任务
-                  </TableEmpty>
-                )}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {nodes.map((node) => (
+                <TableRow key={node.id}>
+                  <TableCell>{node.name || node.server}</TableCell>
+                  <TableCell>{node.score}</TableCell>
+                  {targets.map((target) => {
+                    const result = node.ai_access?.[target.key];
+                    return (
+                      <TableCell key={target.key}>
+                        {result ? (result.ok ? "通过" : "失败") : "—"}
+                      </TableCell>
+                    );
+                  })}
+                </TableRow>
+              ))}
+              {!nodes.length && (
+                <TableRow>
+                  <TableCell colSpan={targets.length + 2}>暂无 AI 探测结果。</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </>
   );
 }

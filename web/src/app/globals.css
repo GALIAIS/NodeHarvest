@@ -1,50 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
-
-/*
- * NodeHarvest control plane — hard-edge console theme.
- * Every radius token is pinned to 0: any stray `rounded-*` utility in the
- * codebase collapses to a square corner instead of silently softening the UI.
- */
-:root {
-  --radius: 0px;
-
-  --background: #05070d;
-  --foreground: #e2e8f0;
-
-  --card: #0b111d;
-  --card-foreground: #e2e8f0;
-
-  --popover: #080d17;
-  --popover-foreground: #e2e8f0;
-
-  --primary: #22d3ee;
-  --primary-foreground: #04121a;
-
-  --secondary: #16202f;
-  --secondary-foreground: #cbd5e1;
-
-  --muted: #101827;
-  --muted-foreground: #7e8ba1;
-
-  --accent: #fbbf24;
-  --accent-foreground: #1a1204;
-
-  --destructive: #fb7185;
-  --destructive-foreground: #1a0509;
-
-  --success: #34d399;
-  --success-foreground: #04170f;
-
-  --border: #1c2739;
-  --input: #26334a;
-  --ring: #22d3ee;
-
-  --grid-line: rgb(148 163 184 / 0.04);
-  --rule: rgb(148 163 184 / 0.1);
-}
 
 @theme inline {
   --color-background: var(--background);
@@ -62,140 +20,106 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-success: var(--success);
-  --color-success-foreground: var(--success-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
 
-  /* next/font exposes *-face vars so theme tokens never self-reference */
-  --font-sans: var(--font-body-face);
-  --font-display: var(--font-display-face);
-  --font-mono: var(--font-mono-face);
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
 
-  /* hard edge: no radius exists in this design system */
-  --radius-xs: 0px;
-  --radius-sm: 0px;
-  --radius-md: 0px;
-  --radius-lg: 0px;
-  --radius-xl: 0px;
-  --radius-2xl: 0px;
-  --radius-3xl: 0px;
-  --radius-4xl: 0px;
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
 }
 
 @layer base {
   * {
-    border-color: var(--border);
-    outline-color: color-mix(in oklab, var(--ring) 45%, transparent);
-  }
-
-  html,
-  body {
-    min-height: 100%;
-    background: var(--background);
-    color: var(--foreground);
+    @apply border-border outline-ring/50;
   }
 
   body {
-    font-family: var(--font-body-face), ui-sans-serif, system-ui, sans-serif;
-    text-rendering: optimizeLegibility;
-  }
-
-  ::selection {
-    background: color-mix(in oklab, var(--primary) 35%, transparent);
-    color: #f8fafc;
-  }
-
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: var(--input) transparent;
-  }
-
-  button,
-  a,
-  input,
-  select,
-  textarea {
-    -webkit-tap-highlight-color: transparent;
-  }
-}
-
-@layer components {
-  /* Blueprint grid backdrop for the app shell. */
-  .telemetry-grid {
-    background-image:
-      linear-gradient(var(--grid-line) 1px, transparent 1px),
-      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-    background-size: 44px 44px;
-  }
-
-  /* Machined corner ticks — the signature of the hard-edge language. */
-  .corner-ticks {
-    position: relative;
-  }
-
-  .corner-ticks::before,
-  .corner-ticks::after {
-    content: "";
-    position: absolute;
-    width: 7px;
-    height: 7px;
-    pointer-events: none;
-    border-color: color-mix(in oklab, var(--primary) 55%, transparent);
-  }
-
-  .corner-ticks::before {
-    top: -1px;
-    left: -1px;
-    border-top: 1px solid;
-    border-left: 1px solid;
-  }
-
-  .corner-ticks::after {
-    right: -1px;
-    bottom: -1px;
-    border-right: 1px solid;
-    border-bottom: 1px solid;
-  }
-
-  /* Utility rows in dense filter bars. */
-  .control-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 0.75rem;
-  }
-}
-
-@layer utilities {
-  /* Offset block shadow instead of a soft blur — keeps edges readable. */
-  .shadow-hard {
-    box-shadow: 3px 3px 0 0 rgb(0 0 0 / 0.55);
-  }
-
-  .shadow-hard-sm {
-    box-shadow: 2px 2px 0 0 rgb(0 0 0 / 0.5);
-  }
-
-  .rule-y {
-    border-top: 1px solid var(--rule);
-  }
-}
-
-.reveal {
-  animation: reveal 380ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
-}
-
-@keyframes reveal {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .reveal {
-    animation: none;
+    @apply bg-background text-foreground;
   }
 }

@@ -1,32 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Loader2, Play, Radar, Sparkles, Zap } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button, type ButtonProps } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 type Kind = "full" | "fetch" | "quality" | "ai";
 
-const actions: Array<{
-  kind: Kind;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  variant: ButtonProps["variant"];
-}> = [
-  { kind: "full", label: "一键全流程", icon: Sparkles, variant: "accent" },
-  { kind: "fetch", label: "采集", icon: Play, variant: "secondary" },
-  { kind: "quality", label: "智能测速", icon: Zap, variant: "outline" },
-  { kind: "ai", label: "AI 探测", icon: Radar, variant: "ghost" },
+const actions: Array<{ kind: Kind; label: string; variant: "default" | "secondary" | "outline" | "ghost" }> = [
+  { kind: "full", label: "一键全流程", variant: "default" },
+  { kind: "fetch", label: "采集", variant: "secondary" },
+  { kind: "quality", label: "智能测速", variant: "outline" },
+  { kind: "ai", label: "AI 探测", variant: "ghost" },
 ];
 
 export function JobActions({
   onStarted,
-  className,
   disabled = false,
 }: {
   onStarted?: (jobId: string) => void;
-  className?: string;
   disabled?: boolean;
 }) {
   const [loading, setLoading] = useState<Kind | null>(null);
@@ -36,15 +28,15 @@ export function JobActions({
     setError(null);
     setLoading(kind);
     try {
-      const opts = kind === "quality" || kind === "full" ? { max_test: 800, rounds: 3 } : {};
+      const options = kind === "quality" || kind === "full" ? { max_test: 800, rounds: 3 } : {};
       const job =
         kind === "full"
-          ? await api.startFull(opts)
+          ? await api.startFull(options)
           : kind === "fetch"
-            ? await api.startFetch(opts)
+            ? await api.startFetch(options)
             : kind === "quality"
-              ? await api.startQuality(opts)
-              : await api.startAI(opts);
+              ? await api.startQuality(options)
+              : await api.startAI(options);
       onStarted?.(job.id);
     } catch (cause) {
       setError(errorMessage(cause, "启动失败"));
@@ -54,26 +46,23 @@ export function JobActions({
   }
 
   return (
-    <div className={className}>
-      <div className="flex flex-wrap gap-2">
-        {actions.map(({ kind, label, icon: Icon, variant }) => (
-          <Button
-            key={kind}
-            variant={variant}
-            onClick={() => run(kind)}
-            disabled={disabled || loading !== null}
-          >
-            {loading === kind ? <Loader2 className="size-4 animate-spin" /> : <Icon className="size-4" />}
-            {label}
-          </Button>
-        ))}
-      </div>
+    <section aria-label="任务操作">
+      {actions.map((action) => (
+        <Button
+          key={action.kind}
+          variant={action.variant}
+          disabled={disabled || loading !== null}
+          onClick={() => run(action.kind)}
+        >
+          {loading === action.kind ? "正在启动…" : action.label}
+        </Button>
+      ))}
       {error && (
-        <Alert variant="danger" className="mt-3">
-          <AlertTriangle />
+        <Alert variant="destructive">
+          <AlertTitle>任务未启动</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-    </div>
+    </section>
   );
 }
