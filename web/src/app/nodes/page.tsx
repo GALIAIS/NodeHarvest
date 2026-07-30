@@ -1,8 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Copy, RefreshCw } from "lucide-react";
 import { useLiveRefresh } from "@/components/live-provider";
+import { PageHeader } from "@/components/page-header";
 import { PaginationControls } from "@/components/pagination-controls";
+import { StatusBadge } from "@/components/status-badge";
+import { TableEmpty } from "@/components/table-empty";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,6 +19,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import {
   Table,
   TableBody,
   TableCell,
@@ -23,7 +35,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, errorMessage, type CountryRow, type NodeItem } from "@/lib/api";
-import { formatMs, formatTime } from "@/lib/utils";
+import { formatMs, formatNumber, formatTime } from "@/lib/utils";
 
 export default function NodesPage() {
   const [nodes, setNodes] = useState<NodeItem[]>([]);
@@ -107,10 +119,24 @@ export default function NodesPage() {
 
   return (
     <>
-      <header className="space-y-1">
-        <h1 className="text-3xl font-bold tracking-tight">节点库</h1>
-        <p className="text-muted-foreground">共 {total} 个节点。</p>
-      </header>
+      <PageHeader
+        title="节点库"
+        description={"检索、筛选并查看 " + total + " 个节点的质量状态。"}
+        actions={
+          <Button
+            type="button"
+            variant="outline"
+            disabled={loading}
+            onClick={() => {
+              setCursorStack([]);
+              void load();
+            }}
+          >
+            <RefreshCw className={loading ? "animate-spin" : undefined} />
+            刷新
+          </Button>
+        }
+      />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>节点加载失败</AlertTitle>
@@ -122,84 +148,100 @@ export default function NodesPage() {
           <CardTitle>筛选</CardTitle>
           <CardDescription>筛选条件会立即应用。</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <Label htmlFor="node-query">搜索</Label>
-          <Input
-            id="node-query"
-            value={query}
-            placeholder="名称、服务器或标签"
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <Label htmlFor="node-protocol">协议</Label>
-          <Input
-            id="node-protocol"
-            value={protocol}
-            placeholder="例如 vless"
-            onChange={(event) => setProtocol(event.target.value)}
-          />
-          <Label htmlFor="node-grade">等级</Label>
-          <Input
-            id="node-grade"
-            value={grade}
-            placeholder="S、A、B"
-            onChange={(event) => setGrade(event.target.value)}
-          />
-          <Label htmlFor="node-country">国家</Label>
-          <Input
-            id="node-country"
-            list="node-countries"
-            value={country}
-            placeholder="ISO 代码"
-            onChange={(event) => setCountry(event.target.value)}
-          />
-          <datalist id="node-countries">
-            {countries.map((item) => (
-              <option key={item.code} value={item.code}>
-                {item.display}
-              </option>
-            ))}
-          </datalist>
-          <Label htmlFor="node-min-score">最低评分</Label>
-          <Input
-            id="node-min-score"
-            type="number"
-            min="0"
-            max="100"
-            value={minScore}
-            onChange={(event) => setMinScore(event.target.value)}
-          />
-          <Button
-            type="button"
-            variant={alive ? "secondary" : "outline"}
-            aria-pressed={alive}
-            onClick={() => setAlive((value) => !value)}
-          >
-            仅存活节点
-          </Button>
-          <Button
-            type="button"
-            variant={highQuality ? "secondary" : "outline"}
-            aria-pressed={highQuality}
-            onClick={() => setHighQuality((value) => !value)}
-          >
-            仅高质量节点
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={loading}
-            onClick={() => {
-              setCursorStack([]);
-              void load();
-            }}
-          >
-            刷新
-          </Button>
+        <CardContent className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="node-query">搜索</Label>
+              <Input
+                id="node-query"
+                value={query}
+                placeholder="名称、服务器或标签"
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="node-protocol">协议</Label>
+              <Select
+                value={protocol || "all"}
+                onValueChange={(value) => setProtocol(value === "all" ? "" : value)}
+              >
+                <SelectTrigger id="node-protocol" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部协议</SelectItem>
+                  {["vless", "vmess", "trojan", "ss", "hysteria2", "tuic"].map((item) => (
+                    <SelectItem key={item} value={item}>{item}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="node-grade">等级</Label>
+              <Select
+                value={grade || "all"}
+                onValueChange={(value) => setGrade(value === "all" ? "" : value)}
+              >
+                <SelectTrigger id="node-grade" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部等级</SelectItem>
+                  {["S", "A", "B", "C", "D"].map((item) => (
+                    <SelectItem key={item} value={item}>{item}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="node-country">国家</Label>
+              <Input
+                id="node-country"
+                list="node-countries"
+                value={country}
+                placeholder="ISO 代码"
+                onChange={(event) => setCountry(event.target.value)}
+              />
+              <datalist id="node-countries">
+                {countries.map((item) => (
+                  <option key={item.code} value={item.code}>
+                    {item.display}
+                  </option>
+                ))}
+              </datalist>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="node-min-score">最低评分</Label>
+              <Input
+                id="node-min-score"
+                type="number"
+                min="0"
+                max="100"
+                value={minScore}
+                onChange={(event) => setMinScore(event.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <div className="flex items-center gap-2">
+              <Switch id="node-alive" checked={alive} onCheckedChange={setAlive} />
+              <Label htmlFor="node-alive">仅存活节点</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="node-high-quality"
+                checked={highQuality}
+                onCheckedChange={setHighQuality}
+              />
+              <Label htmlFor="node-high-quality">仅高质量节点</Label>
+            </div>
+          </div>
         </CardContent>
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>结果</CardTitle>
+          <CardTitle>节点列表</CardTitle>
+          <CardDescription>当前筛选结果共 {total} 条。</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -210,8 +252,8 @@ export default function NodesPage() {
                 <TableHead>服务器</TableHead>
                 <TableHead>位置</TableHead>
                 <TableHead>等级</TableHead>
-                <TableHead>评分</TableHead>
-                <TableHead>延迟</TableHead>
+                <TableHead className="text-right">评分</TableHead>
+                <TableHead className="text-right">延迟</TableHead>
                 <TableHead>最后测试</TableHead>
                 <TableHead>操作</TableHead>
               </TableRow>
@@ -219,13 +261,21 @@ export default function NodesPage() {
             <TableBody>
               {nodes.map((node) => (
                 <TableRow key={node.id}>
-                  <TableCell>{node.name || "未命名"}</TableCell>
-                  <TableCell>{node.protocol}</TableCell>
-                  <TableCell>{node.server + ":" + node.port}</TableCell>
+                  <TableCell className="font-medium">{node.name || "未命名"}</TableCell>
+                  <TableCell>
+                    <StatusBadge status={node.alive ? "alive" : "dead"}>
+                      {node.protocol}
+                    </StatusBadge>
+                  </TableCell>
+                  <TableCell className="max-w-72 truncate font-mono text-xs" title={node.server + ":" + node.port}>
+                    {node.server + ":" + node.port}
+                  </TableCell>
                   <TableCell>{[node.country, node.city].filter(Boolean).join(" · ") || "—"}</TableCell>
                   <TableCell>{node.grade}</TableCell>
-                  <TableCell>{node.score}</TableCell>
-                  <TableCell>{formatMs(node.latency_ms)}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatNumber(node.score)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">{formatMs(node.latency_ms)}</TableCell>
                   <TableCell>{formatTime(node.tested_at)}</TableCell>
                   <TableCell>
                     <Button
@@ -235,15 +285,14 @@ export default function NodesPage() {
                       disabled={!node.raw_uri}
                       onClick={() => void copyNode(node)}
                     >
+                      <Copy />
                       复制链接
                     </Button>
                   </TableCell>
                 </TableRow>
               ))}
               {!nodes.length && (
-                <TableRow>
-                  <TableCell colSpan={9}>没有匹配的节点。</TableCell>
-                </TableRow>
+                <TableEmpty colSpan={9}>没有匹配的节点。</TableEmpty>
               )}
             </TableBody>
           </Table>

@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Copy, Download } from "lucide-react";
 import { useLiveRefresh } from "@/components/live-provider";
+import { PageHeader } from "@/components/page-header";
 import { useSession } from "@/components/session-provider";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -93,81 +95,128 @@ export default function ExportPage() {
 
   return (
     <>
-      <header className="space-y-1">
-        <h1 className="text-3xl font-bold tracking-tight">订阅池与导出</h1>
-        <p className="text-muted-foreground">使用公开订阅池，或按条件下载节点列表。</p>
-      </header>
+      <PageHeader
+        title="订阅池与导出"
+        description="复制公开订阅地址，或按质量条件生成临时节点列表。"
+      />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>导出失败</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      <Card>
-        <CardHeader>
-          <CardTitle>公开订阅池</CardTitle>
-          <CardDescription>复制适合客户端的订阅地址。</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <section className="space-y-4" aria-labelledby="public-pools-title">
+        <div>
+          <h2 id="public-pools-title" className="text-lg font-semibold">公开订阅池</h2>
+          <p className="text-sm text-muted-foreground">复制适合客户端格式的订阅地址。</p>
+        </div>
+        <div className="grid gap-4 xl:grid-cols-2">
           {pools.map((pool) => (
-            <section key={pool.key} className="space-y-2">
-              <h2>{pool.title + " · " + pool.count + " 个节点"}</h2>
-              <p>{pool.description}</p>
-              {(["raw", "base64", "clash"] as const).map((format) => {
-                const value = origin + pool.urls[format];
-                const key = pool.key + ":" + format;
-                return (
-                  <p key={format}>
-                    {format + ": " + value}
-                    <Button type="button" size="sm" variant="outline" onClick={() => void copy(value, key)}>
-                      {copied === key ? "已复制" : "复制"}
-                    </Button>
-                  </p>
-                );
-              })}
-            </section>
+            <Card key={pool.key} className="min-w-0">
+              <CardHeader>
+                <CardTitle>{pool.title}</CardTitle>
+                <CardDescription>
+                  {pool.description + " · " + pool.count + " 个节点"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {(["raw", "base64", "clash"] as const).map((format) => {
+                  const value = origin + pool.urls[format];
+                  const key = pool.key + ":" + format;
+                  return (
+                    <div key={format} className="space-y-2 rounded-md border p-3">
+                      <p className="text-sm font-medium">{format}</p>
+                      <p className="break-all font-mono text-xs text-muted-foreground">
+                        {value}
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void copy(value, key)}
+                      >
+                        <Copy />
+                        {copied === key ? "已复制" : "复制地址"}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
           ))}
-          {!pools.length && <p>暂无订阅池。</p>}
-        </CardContent>
-      </Card>
+          {!pools.length && (
+            <Card>
+              <CardContent className="py-12 text-center text-muted-foreground">
+                暂无订阅池。
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </section>
       <Card>
         <CardHeader>
           <CardTitle>临时导出</CardTitle>
           <CardDescription>导出接口需要登录，浏览器会附带当前会话凭证。</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <Label htmlFor="export-limit">数量上限</Label>
-          <Input
-            id="export-limit"
-            type="number"
-            min="1"
-            value={limit}
-            onChange={(event) => setLimit(event.target.value)}
-          />
-          <Label htmlFor="export-score">最低评分</Label>
-          <Input
-            id="export-score"
-            type="number"
-            min="0"
-            max="100"
-            value={minScore}
-            onChange={(event) => setMinScore(event.target.value)}
-          />
-          <Label htmlFor="export-ai">AI 过滤</Label>
-          <Input
-            id="export-ai"
-            value={ai}
-            placeholder="例如 chatgpt"
-            onChange={(event) => setAI(event.target.value)}
-          />
-          <p>{raw}</p>
-          <Button type="button" onClick={() => void download(raw, "nodes.txt")}>
-            下载原始节点
-          </Button>
-          <p>{base64}</p>
-          <Button type="button" variant="outline" onClick={() => void download(base64, "nodes.base64.txt")}>
-            下载 Base64
-          </Button>
+        <CardContent className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <Label htmlFor="export-limit">数量上限</Label>
+              <Input
+                id="export-limit"
+                type="number"
+                min="1"
+                value={limit}
+                onChange={(event) => setLimit(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="export-score">最低评分</Label>
+              <Input
+                id="export-score"
+                type="number"
+                min="0"
+                max="100"
+                value={minScore}
+                onChange={(event) => setMinScore(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="export-ai">AI 过滤</Label>
+              <Input
+                id="export-ai"
+                value={ai}
+                placeholder="例如 chatgpt"
+                onChange={(event) => setAI(event.target.value)}
+              />
+            </div>
+          </div>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <div className="space-y-3 rounded-md border p-4">
+              <div className="space-y-1">
+                <p className="font-medium">原始节点</p>
+                <p className="break-all font-mono text-xs text-muted-foreground">{raw}</p>
+              </div>
+              <Button type="button" onClick={() => void download(raw, "nodes.txt")}>
+                <Download />
+                下载原始节点
+              </Button>
+            </div>
+            <div className="space-y-3 rounded-md border p-4">
+              <div className="space-y-1">
+                <p className="font-medium">Base64</p>
+                <p className="break-all font-mono text-xs text-muted-foreground">{base64}</p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void download(base64, "nodes.base64.txt")}
+              >
+                <Download />
+                下载 Base64
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </>

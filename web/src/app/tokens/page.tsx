@@ -2,12 +2,15 @@
 
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
+import { Copy, Plus, RefreshCw } from "lucide-react";
 import { AuthRequired } from "@/components/auth-required";
 import { useLiveRefresh } from "@/components/live-provider";
+import { PageHeader } from "@/components/page-header";
 import { PaginationControls } from "@/components/pagination-controls";
 import { useSession } from "@/components/session-provider";
+import { StatusBadge } from "@/components/status-badge";
+import { TableEmpty } from "@/components/table-empty";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -151,10 +154,16 @@ export default function TokensPage() {
 
   return (
     <>
-      <header className="space-y-1">
-        <h1 className="text-3xl font-bold tracking-tight">订阅 Token</h1>
-        <p className="text-muted-foreground">创建、启用、停用和删除订阅凭证。</p>
-      </header>
+      <PageHeader
+        title="订阅 Token"
+        description={"创建并管理租户隔离的订阅凭证，共 " + total + " 个。"}
+        actions={
+          <Button type="button" variant="outline" onClick={() => void load(currentCursor)}>
+            <RefreshCw />
+            刷新
+          </Button>
+        }
+      />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>操作失败</AlertTitle>
@@ -167,14 +176,19 @@ export default function TokensPage() {
             <CardTitle>新 Token</CardTitle>
             <CardDescription>明文仅在创建后展示，请立即保存。</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-wrap items-center gap-2">
-            <code>{created.token}</code>
-            <Button type="button" variant="outline" onClick={() => void copy()}>
-              复制
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => setCreated(null)}>
-              我已保存
-            </Button>
+          <CardContent className="space-y-4">
+            <code className="block break-all rounded-md bg-muted p-4 text-sm">
+              {created.token}
+            </code>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={() => void copy()}>
+                <Copy />
+                复制
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setCreated(null)}>
+                我已保存
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -185,63 +199,80 @@ export default function TokensPage() {
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={create}>
-            <Label htmlFor="token-name">名称</Label>
-            <Input
-              id="token-name"
-              value={form.name}
-              onChange={(event) => setForm({ ...form, name: event.target.value })}
-              required
-              maxLength={100}
-            />
-            <Label htmlFor="token-note">备注</Label>
-            <Input
-              id="token-note"
-              value={form.note}
-              onChange={(event) => setForm({ ...form, note: event.target.value })}
-              maxLength={1000}
-            />
-            <Label htmlFor="token-countries">允许国家</Label>
-            <Input
-              id="token-countries"
-              value={form.countries}
-              placeholder="US, JP, SG"
-              onChange={(event) => setForm({ ...form, countries: event.target.value })}
-            />
-            <Label htmlFor="token-protocols">允许协议</Label>
-            <Input
-              id="token-protocols"
-              value={form.protocols}
-              placeholder="vless, trojan"
-              onChange={(event) => setForm({ ...form, protocols: event.target.value })}
-            />
-            <Label htmlFor="token-days">有效天数</Label>
-            <Input
-              id="token-days"
-              type="number"
-              min="0"
-              max="3650"
-              value={form.days}
-              onChange={(event) => setForm({ ...form, days: event.target.value })}
-            />
-            <Label htmlFor="token-rps">最大 RPS</Label>
-            <Input
-              id="token-rps"
-              type="number"
-              min="0"
-              max="1000"
-              step="0.1"
-              value={form.max_rps}
-              onChange={(event) => setForm({ ...form, max_rps: event.target.value })}
-            />
-            <Label htmlFor="token-quota">日配额</Label>
-            <Input
-              id="token-quota"
-              type="number"
-              min="0"
-              value={form.daily_quota}
-              onChange={(event) => setForm({ ...form, daily_quota: event.target.value })}
-            />
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="space-y-2">
+                <Label htmlFor="token-name">名称</Label>
+                <Input
+                  id="token-name"
+                  value={form.name}
+                  onChange={(event) => setForm({ ...form, name: event.target.value })}
+                  required
+                  maxLength={100}
+                />
+              </div>
+              <div className="space-y-2 md:col-span-1 xl:col-span-3">
+                <Label htmlFor="token-note">备注</Label>
+                <Input
+                  id="token-note"
+                  value={form.note}
+                  onChange={(event) => setForm({ ...form, note: event.target.value })}
+                  maxLength={1000}
+                />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="token-countries">允许国家</Label>
+                <Input
+                  id="token-countries"
+                  value={form.countries}
+                  placeholder="US, JP, SG"
+                  onChange={(event) => setForm({ ...form, countries: event.target.value })}
+                />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="token-protocols">允许协议</Label>
+                <Input
+                  id="token-protocols"
+                  value={form.protocols}
+                  placeholder="vless, trojan"
+                  onChange={(event) => setForm({ ...form, protocols: event.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="token-days">有效天数</Label>
+                <Input
+                  id="token-days"
+                  type="number"
+                  min="0"
+                  max="3650"
+                  value={form.days}
+                  onChange={(event) => setForm({ ...form, days: event.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="token-rps">最大 RPS</Label>
+                <Input
+                  id="token-rps"
+                  type="number"
+                  min="0"
+                  max="1000"
+                  step="0.1"
+                  value={form.max_rps}
+                  onChange={(event) => setForm({ ...form, max_rps: event.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="token-quota">日配额</Label>
+                <Input
+                  id="token-quota"
+                  type="number"
+                  min="0"
+                  value={form.daily_quota}
+                  onChange={(event) => setForm({ ...form, daily_quota: event.target.value })}
+                />
+              </div>
+            </div>
             <Button type="submit" disabled={busy === "create"}>
+              <Plus />
               {busy === "create" ? "创建中…" : "创建 Token"}
             </Button>
           </form>
@@ -250,6 +281,7 @@ export default function TokensPage() {
       <Card>
         <CardHeader>
           <CardTitle>Token 列表</CardTitle>
+          <CardDescription>明文不会再次显示；启停操作立即生效。</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -267,19 +299,19 @@ export default function TokensPage() {
             <TableBody>
               {tokens.map((token) => (
                 <TableRow key={token.id}>
-                  <TableCell>{token.name}</TableCell>
-                  <TableCell>{token.token_prefix}</TableCell>
+                  <TableCell className="font-medium">{token.name}</TableCell>
+                  <TableCell className="font-mono text-xs">{token.token_prefix}</TableCell>
                   <TableCell>
-                    <Badge variant={token.enabled ? "default" : "secondary"}>
+                    <StatusBadge status={token.enabled ? "enabled" : "disabled"}>
                       {token.enabled ? "启用" : "停用"}
-                    </Badge>
+                    </StatusBadge>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="max-w-sm whitespace-normal">
                     {(token.allow_countries?.join(", ") || "全部国家") +
                       " · " +
                       (token.allow_protocols?.join(", ") || "全部协议")}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="tabular-nums">
                     {token.requests_today +
                       " 请求 · " +
                       formatBytes(token.bytes_today) +
@@ -287,31 +319,31 @@ export default function TokensPage() {
                   </TableCell>
                   <TableCell>{formatTime(token.expires_at)}</TableCell>
                   <TableCell>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={busy === token.id}
-                      onClick={() => void toggle(token)}
-                    >
-                      {token.enabled ? "停用" : "启用"}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="destructive"
-                      disabled={busy === token.id}
-                      onClick={() => void remove(token)}
-                    >
-                      {confirmDelete === token.id ? "再次点击确认删除" : "删除"}
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={busy === token.id}
+                        onClick={() => void toggle(token)}
+                      >
+                        {token.enabled ? "停用" : "启用"}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        disabled={busy === token.id}
+                        onClick={() => void remove(token)}
+                      >
+                        {confirmDelete === token.id ? "再次确认" : "删除"}
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
               {!tokens.length && (
-                <TableRow>
-                  <TableCell colSpan={7}>暂无 Token。</TableCell>
-                </TableRow>
+                <TableEmpty colSpan={7}>暂无 Token。</TableEmpty>
               )}
             </TableBody>
           </Table>

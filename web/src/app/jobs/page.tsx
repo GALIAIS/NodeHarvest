@@ -1,11 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { AuthRequired } from "@/components/auth-required";
 import { JobActions } from "@/components/job-actions";
 import { useLiveRefresh } from "@/components/live-provider";
+import { PageHeader } from "@/components/page-header";
 import { PaginationControls } from "@/components/pagination-controls";
 import { useSession } from "@/components/session-provider";
+import { StatusBadge } from "@/components/status-badge";
+import { TableEmpty } from "@/components/table-empty";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,6 +19,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import {
   Table,
   TableBody,
@@ -110,10 +115,20 @@ export default function JobsPage() {
 
   return (
     <>
-      <header className="space-y-1">
-        <h1 className="text-3xl font-bold tracking-tight">任务中心</h1>
-        <p className="text-muted-foreground">查看运行记录、队列和任务事件。</p>
-      </header>
+      <PageHeader
+        title="任务中心"
+        description="查看任务运行记录、持久化队列和事件明细。"
+        actions={
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void load(currentCursor)}
+          >
+            <RefreshCw />
+            刷新
+          </Button>
+        }
+      />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>任务中心不可用</AlertTitle>
@@ -124,7 +139,13 @@ export default function JobsPage() {
         <CardHeader>
           <CardTitle>队列</CardTitle>
           <CardDescription>
-            {queue ? (queue.enabled ? "已启用" : "未启用") + "，工作线程 " + (queue.workers ?? "—") : "加载中…"}
+            {queue
+              ? (queue.enabled ? "已启用" : "未启用") +
+                " · 工作线程 " +
+                (queue.workers ?? "—") +
+                " · 排队任务 " +
+                tasks.length
+              : "加载中…"}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -156,10 +177,19 @@ export default function JobsPage() {
             <TableBody>
               {jobs.map((job) => (
                 <TableRow key={job.id}>
-                  <TableCell>{job.type}</TableCell>
-                  <TableCell>{job.status}</TableCell>
-                  <TableCell>{job.progress + "%"}</TableCell>
-                  <TableCell>{job.error || job.message}</TableCell>
+                  <TableCell className="font-medium">{job.type}</TableCell>
+                  <TableCell><StatusBadge status={job.status} /></TableCell>
+                  <TableCell>
+                    <div className="w-32 space-y-1">
+                      <Progress value={job.progress} aria-label={"任务进度 " + job.progress + "%"} />
+                      <p className="text-right text-xs tabular-nums text-muted-foreground">
+                        {job.progress + "%"}
+                      </p>
+                    </div>
+                  </TableCell>
+                  <TableCell className="max-w-md truncate" title={job.error || job.message}>
+                    {job.error || job.message || "—"}
+                  </TableCell>
                   <TableCell>{formatTime(job.updated_at)}</TableCell>
                   <TableCell>
                     <Button type="button" size="sm" variant="outline" onClick={() => void showEvents(job)}>
@@ -169,9 +199,7 @@ export default function JobsPage() {
                 </TableRow>
               ))}
               {!jobs.length && (
-                <TableRow>
-                  <TableCell colSpan={6}>暂无运行记录。</TableCell>
-                </TableRow>
+                <TableEmpty colSpan={6}>暂无运行记录。</TableEmpty>
               )}
             </TableBody>
           </Table>
@@ -188,7 +216,7 @@ export default function JobsPage() {
         <Card>
           <CardHeader>
             <CardTitle>任务事件</CardTitle>
-            <CardDescription>{selectedJob}</CardDescription>
+            <CardDescription className="font-mono">{selectedJob}</CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
@@ -203,14 +231,12 @@ export default function JobsPage() {
                 {events.map((event) => (
                   <TableRow key={event.id}>
                     <TableCell>{formatTime(event.at)}</TableCell>
-                    <TableCell>{event.level}</TableCell>
-                    <TableCell>{event.message}</TableCell>
+                    <TableCell><StatusBadge status={event.level} /></TableCell>
+                    <TableCell className="whitespace-normal">{event.message}</TableCell>
                   </TableRow>
                 ))}
                 {!events.length && (
-                  <TableRow>
-                    <TableCell colSpan={3}>暂无事件。</TableCell>
-                  </TableRow>
+                  <TableEmpty colSpan={3}>暂无事件。</TableEmpty>
                 )}
               </TableBody>
             </Table>
@@ -227,8 +253,8 @@ export default function JobsPage() {
               <TableRow>
                 <TableHead>类型</TableHead>
                 <TableHead>状态</TableHead>
-                <TableHead>优先级</TableHead>
-                <TableHead>尝试次数</TableHead>
+                <TableHead className="text-right">优先级</TableHead>
+                <TableHead className="text-right">尝试次数</TableHead>
                 <TableHead>可执行时间</TableHead>
                 <TableHead>操作</TableHead>
               </TableRow>
@@ -236,10 +262,12 @@ export default function JobsPage() {
             <TableBody>
               {tasks.map((task) => (
                 <TableRow key={task.id}>
-                  <TableCell>{task.type}</TableCell>
-                  <TableCell>{task.status}</TableCell>
-                  <TableCell>{task.priority}</TableCell>
-                  <TableCell>{task.attempts + " / " + task.max_attempts}</TableCell>
+                  <TableCell className="font-medium">{task.type}</TableCell>
+                  <TableCell><StatusBadge status={task.status} /></TableCell>
+                  <TableCell className="text-right tabular-nums">{task.priority}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {task.attempts + " / " + task.max_attempts}
+                  </TableCell>
                   <TableCell>{formatTime(task.available_at)}</TableCell>
                   <TableCell>
                     <Button
@@ -255,9 +283,7 @@ export default function JobsPage() {
                 </TableRow>
               ))}
               {!tasks.length && (
-                <TableRow>
-                  <TableCell colSpan={6}>队列为空。</TableCell>
-                </TableRow>
+                <TableEmpty colSpan={6}>队列为空。</TableEmpty>
               )}
             </TableBody>
           </Table>

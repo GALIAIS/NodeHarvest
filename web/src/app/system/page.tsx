@@ -2,11 +2,14 @@
 
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
+import { RefreshCw, Save } from "lucide-react";
 import { AuthRequired } from "@/components/auth-required";
 import { useLiveRefresh } from "@/components/live-provider";
+import { PageHeader } from "@/components/page-header";
 import { useSession } from "@/components/session-provider";
+import { StatusBadge } from "@/components/status-badge";
+import { TableEmpty } from "@/components/table-empty";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -17,6 +20,8 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -154,13 +159,16 @@ export default function SystemPage() {
 
   return (
     <>
-      <header className="space-y-3">
-        <h1 className="text-3xl font-bold tracking-tight">系统</h1>
-        <p className="text-muted-foreground">查看服务状态与运行时配置。</p>
-        <Button type="button" variant="outline" onClick={() => void load()}>
-          刷新
-        </Button>
-      </header>
+      <PageHeader
+        title="系统"
+        description="查看服务健康状态，并管理可热更新的运行时配置。"
+        actions={
+          <Button type="button" variant="outline" onClick={() => void load()}>
+            <RefreshCw />
+            刷新
+          </Button>
+        }
+      />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>系统操作失败</AlertTitle>
@@ -176,6 +184,7 @@ export default function SystemPage() {
       <Card>
         <CardHeader>
           <CardTitle>运行状态</CardTitle>
+          <CardDescription>服务依赖与当前就绪状态。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -202,9 +211,9 @@ export default function SystemPage() {
             <div className="space-y-1">
               <dt className="text-sm text-muted-foreground">就绪</dt>
               <dd>
-                <Badge variant={ready?.ready ? "default" : "destructive"}>
+                <StatusBadge status={ready?.ready ? "ready" : "unhealthy"}>
                   {ready ? (ready.ready ? "就绪" : "未就绪") : "加载中"}
-                </Badge>
+                </StatusBadge>
               </dd>
             </div>
           </dl>
@@ -222,114 +231,171 @@ export default function SystemPage() {
           ) : authenticated && !canAdmin ? (
             <AuthRequired reason="forbidden" title="需要 admin 角色" />
           ) : (
-            <form className="space-y-4" onSubmit={save}>
-              <Label htmlFor="publish-score">发布最低评分</Label>
-              <Input
-                id="publish-score"
-                type="number"
-                min="0"
-                max="100"
-                value={form.publish_min_score}
-                onChange={(event) => update("publish_min_score", event.target.value)}
-              />
-              <Label htmlFor="publish-max-nodes">发布最多节点</Label>
-              <Input
-                id="publish-max-nodes"
-                type="number"
-                min="1"
-                max="100000"
-                value={form.publish_max_nodes}
-                onChange={(event) => update("publish_max_nodes", event.target.value)}
-              />
-              <Label htmlFor="publish-cache">发布缓存秒数</Label>
-              <Input
-                id="publish-cache"
-                type="number"
-                min="0"
-                max="86400"
-                value={form.publish_cache_sec}
-                onChange={(event) => update("publish_cache_sec", event.target.value)}
-              />
-              <Label htmlFor="publish-age">最大节点年龄（小时）</Label>
-              <Input
-                id="publish-age"
-                type="number"
-                min="1"
-                max="8760"
-                value={form.publish_max_node_age_hours}
-                onChange={(event) => update("publish_max_node_age_hours", event.target.value)}
-              />
-              <Button
-                type="button"
-                variant={form.publish_alive_only ? "secondary" : "outline"}
-                aria-pressed={form.publish_alive_only}
-                onClick={() => update("publish_alive_only", !form.publish_alive_only)}
-              >
-                仅发布存活节点
-              </Button>
-              <Label htmlFor="governance-failures">连续失败停源阈值</Label>
-              <Input
-                id="governance-failures"
-                type="number"
-                min="1"
-                max="100"
-                value={form.governance_disable_after_failures}
-                onChange={(event) => update("governance_disable_after_failures", event.target.value)}
-              />
-              <Label htmlFor="governance-cooldown">冷却小时</Label>
-              <Input
-                id="governance-cooldown"
-                type="number"
-                min="1"
-                max="720"
-                value={form.governance_cooldown_hours}
-                onChange={(event) => update("governance_cooldown_hours", event.target.value)}
-              />
-              <Label htmlFor="governance-drop">HQ 骤降阈值（%）</Label>
-              <Input
-                id="governance-drop"
-                type="number"
-                min="1"
-                max="100"
-                value={form.governance_hq_drop_percent}
-                onChange={(event) => update("governance_hq_drop_percent", event.target.value)}
-              />
-              <Label htmlFor="governance-country">单国家占比阈值（%）</Label>
-              <Input
-                id="governance-country"
-                type="number"
-                min="1"
-                max="100"
-                value={form.governance_country_share_percent}
-                onChange={(event) => update("governance_country_share_percent", event.target.value)}
-              />
-              <Button
-                type="button"
-                variant={form.dial_after_quality ? "secondary" : "outline"}
-                aria-pressed={form.dial_after_quality}
-                onClick={() => update("dial_after_quality", !form.dial_after_quality)}
-              >
-                质量任务后真实拨测
-              </Button>
-              <Label htmlFor="dial-max">每次最多拨测节点</Label>
-              <Input
-                id="dial-max"
-                type="number"
-                min="0"
-                max="100000"
-                value={form.dial_after_quality_max}
-                onChange={(event) => update("dial_after_quality_max", event.target.value)}
-              />
-              <Label htmlFor="config-confirm">输入 APPLY 确认</Label>
-              <Input
-                id="config-confirm"
-                value={confirm}
-                autoComplete="off"
-                onChange={(event) => setConfirm(event.target.value)}
-              />
-              <Button type="submit" variant="destructive" disabled={busy || confirm !== "APPLY"}>
-                {busy ? "应用中…" : "应用配置"}
-              </Button>
+            <form className="space-y-6" onSubmit={save}>
+              <section className="space-y-4" aria-labelledby="publish-settings">
+                <div>
+                  <h3 id="publish-settings" className="font-medium">发布策略</h3>
+                  <p className="text-sm text-muted-foreground">控制订阅输出的质量、数量与缓存。</p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="publish-score">发布最低评分</Label>
+                    <Input
+                      id="publish-score"
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={form.publish_min_score}
+                      onChange={(event) => update("publish_min_score", event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="publish-max-nodes">发布最多节点</Label>
+                    <Input
+                      id="publish-max-nodes"
+                      type="number"
+                      min="1"
+                      max="100000"
+                      value={form.publish_max_nodes}
+                      onChange={(event) => update("publish_max_nodes", event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="publish-cache">发布缓存秒数</Label>
+                    <Input
+                      id="publish-cache"
+                      type="number"
+                      min="0"
+                      max="86400"
+                      value={form.publish_cache_sec}
+                      onChange={(event) => update("publish_cache_sec", event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="publish-age">最大节点年龄（小时）</Label>
+                    <Input
+                      id="publish-age"
+                      type="number"
+                      min="1"
+                      max="8760"
+                      value={form.publish_max_node_age_hours}
+                      onChange={(event) => update("publish_max_node_age_hours", event.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="publish-alive-only"
+                    checked={form.publish_alive_only}
+                    onCheckedChange={(checked) => update("publish_alive_only", checked)}
+                  />
+                  <Label htmlFor="publish-alive-only">仅发布存活节点</Label>
+                </div>
+              </section>
+              <Separator />
+              <section className="space-y-4" aria-labelledby="governance-settings">
+                <div>
+                  <h3 id="governance-settings" className="font-medium">来源治理</h3>
+                  <p className="text-sm text-muted-foreground">设置停源、冷却与质量异常阈值。</p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="governance-failures">连续失败停源阈值</Label>
+                    <Input
+                      id="governance-failures"
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={form.governance_disable_after_failures}
+                      onChange={(event) => update("governance_disable_after_failures", event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="governance-cooldown">冷却小时</Label>
+                    <Input
+                      id="governance-cooldown"
+                      type="number"
+                      min="1"
+                      max="720"
+                      value={form.governance_cooldown_hours}
+                      onChange={(event) => update("governance_cooldown_hours", event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="governance-drop">HQ 骤降阈值（%）</Label>
+                    <Input
+                      id="governance-drop"
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={form.governance_hq_drop_percent}
+                      onChange={(event) => update("governance_hq_drop_percent", event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="governance-country">单国家占比阈值（%）</Label>
+                    <Input
+                      id="governance-country"
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={form.governance_country_share_percent}
+                      onChange={(event) => update("governance_country_share_percent", event.target.value)}
+                    />
+                  </div>
+                </div>
+              </section>
+              <Separator />
+              <section className="space-y-4" aria-labelledby="dial-settings">
+                <div>
+                  <h3 id="dial-settings" className="font-medium">真实拨测</h3>
+                  <p className="text-sm text-muted-foreground">控制质量任务后的真实网络验证。</p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="dial-after-quality"
+                      checked={form.dial_after_quality}
+                      onCheckedChange={(checked) => update("dial_after_quality", checked)}
+                    />
+                    <Label htmlFor="dial-after-quality">质量任务后真实拨测</Label>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="dial-max">每次最多拨测节点</Label>
+                    <Input
+                      id="dial-max"
+                      type="number"
+                      min="0"
+                      max="100000"
+                      value={form.dial_after_quality_max}
+                      onChange={(event) => update("dial_after_quality_max", event.target.value)}
+                    />
+                  </div>
+                </div>
+              </section>
+              <Separator />
+              <section className="space-y-4" aria-labelledby="apply-settings">
+                <div>
+                  <h3 id="apply-settings" className="font-medium">确认应用</h3>
+                  <p className="text-sm text-muted-foreground">输入 APPLY 后保存，配置会立即生效。</p>
+                </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <div className="w-full max-w-sm space-y-2">
+                    <Label htmlFor="config-confirm">确认文本</Label>
+                    <Input
+                      id="config-confirm"
+                      value={confirm}
+                      placeholder="APPLY"
+                      autoComplete="off"
+                      onChange={(event) => setConfirm(event.target.value)}
+                    />
+                  </div>
+                  <Button type="submit" variant="destructive" disabled={busy || confirm !== "APPLY"}>
+                    <Save />
+                    {busy ? "应用中…" : "应用配置"}
+                  </Button>
+                </div>
+              </section>
             </form>
           )}
         </CardContent>
@@ -354,22 +420,24 @@ export default function SystemPage() {
               <TableBody>
                 {versions.map((version) => (
                   <TableRow key={version.id}>
-                    <TableCell>{version.id}</TableCell>
-                    <TableCell>{version.actor}</TableCell>
-                    <TableCell>{version.checksum}</TableCell>
+                    <TableCell className="font-mono text-xs">{version.id}</TableCell>
+                    <TableCell className="font-mono text-xs">{version.actor}</TableCell>
+                    <TableCell className="max-w-64 truncate font-mono text-xs" title={version.checksum}>
+                      {version.checksum}
+                    </TableCell>
                     <TableCell>{formatTime(version.created_at)}</TableCell>
                     <TableCell>
                       <details>
-                        <summary>查看</summary>
-                        <pre>{version.patch_json}</pre>
+                        <summary className="cursor-pointer text-sm font-medium">查看</summary>
+                        <pre className="mt-2 max-w-xl overflow-x-auto rounded-md bg-muted p-4 text-xs">
+                          {version.patch_json}
+                        </pre>
                       </details>
                     </TableCell>
                   </TableRow>
                 ))}
                 {!versions.length && (
-                  <TableRow>
-                    <TableCell colSpan={5}>暂无配置版本。</TableCell>
-                  </TableRow>
+                  <TableEmpty colSpan={5}>暂无配置版本。</TableEmpty>
                 )}
               </TableBody>
             </Table>

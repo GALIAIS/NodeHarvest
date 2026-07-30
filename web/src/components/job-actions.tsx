@@ -1,17 +1,23 @@
 "use client";
 
 import { useState } from "react";
+import { Bot, Gauge, Play, RadioTower } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
 type Kind = "full" | "fetch" | "quality" | "ai";
 
-const actions: Array<{ kind: Kind; label: string; variant: "default" | "secondary" | "outline" | "ghost" }> = [
-  { kind: "full", label: "一键全流程", variant: "default" },
-  { kind: "fetch", label: "采集", variant: "secondary" },
-  { kind: "quality", label: "智能测速", variant: "outline" },
-  { kind: "ai", label: "AI 探测", variant: "ghost" },
+const actions: Array<{
+  kind: Kind;
+  label: string;
+  variant: "default" | "secondary" | "outline" | "ghost";
+  icon: typeof Play;
+}> = [
+  { kind: "full", label: "一键全流程", variant: "default", icon: Play },
+  { kind: "fetch", label: "采集", variant: "secondary", icon: RadioTower },
+  { kind: "quality", label: "智能测速", variant: "outline", icon: Gauge },
+  { kind: "ai", label: "AI 探测", variant: "ghost", icon: Bot },
 ];
 
 export function JobActions({
@@ -55,6 +61,7 @@ export function JobActions({
             disabled={disabled || loading !== null}
             onClick={() => run(action.kind)}
           >
+            <action.icon />
             {loading === action.kind ? "正在启动…" : action.label}
           </Button>
         ))}

@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { AuthRequired } from "@/components/auth-required";
 import { useLiveRefresh } from "@/components/live-provider";
+import { PageHeader } from "@/components/page-header";
 import { PaginationControls } from "@/components/pagination-controls";
 import { useSession } from "@/components/session-provider";
+import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -15,6 +17,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { api, errorMessage, type AlertRecord } from "@/lib/api";
 import { formatTime } from "@/lib/utils";
 
@@ -81,10 +85,23 @@ export default function AlertsPage() {
 
   return (
     <>
-      <header className="space-y-1">
-        <h1 className="text-3xl font-bold tracking-tight">异常告警</h1>
-        <p className="text-muted-foreground">确认或解决当前异常。</p>
-      </header>
+      <PageHeader
+        title="异常告警"
+        description={"查看、确认并解决系统异常，共 " + total + " 条。"}
+        actions={
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              setCursorStack([]);
+              void load();
+            }}
+          >
+            <RefreshCw />
+            刷新
+          </Button>
+        }
+      />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>告警操作失败</AlertTitle>
@@ -96,25 +113,15 @@ export default function AlertsPage() {
           <CardTitle>筛选</CardTitle>
           <CardDescription>选择显示活动告警或全部告警。</CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant={activeOnly ? "secondary" : "outline"}
-            aria-pressed={activeOnly}
-            onClick={() => setActiveOnly((value) => !value)}
-          >
-            仅活动告警
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              setCursorStack([]);
-              void load();
-            }}
-          >
-            刷新
-          </Button>
+        <CardContent>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="alerts-active-only"
+              checked={activeOnly}
+              onCheckedChange={setActiveOnly}
+            />
+            <Label htmlFor="alerts-active-only">仅活动告警</Label>
+          </div>
         </CardContent>
       </Card>
       {alerts.map((alert) => (
@@ -124,16 +131,20 @@ export default function AlertsPage() {
             <CardDescription>{alert.kind + " · " + formatTime(alert.created_at)}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Badge variant={alert.severity === "critical" ? "destructive" : "secondary"}>
-              {alert.severity}
-            </Badge>
-            <Badge variant={alert.active ? "default" : "outline"}>
-              {alert.active ? "活动" : "已解决"}
-            </Badge>
+            <div className="flex flex-wrap gap-2">
+              <StatusBadge status={alert.severity} />
+              <StatusBadge status={alert.active ? "active" : "inactive"}>
+                {alert.active ? "活动" : "已解决"}
+              </StatusBadge>
+            </div>
             {alert.acknowledged_at && <p>{"已由 " + (alert.acknowledged_by || "未知用户") + " 确认。"}</p>}
-            {alert.details && <pre>{JSON.stringify(alert.details, null, 2)}</pre>}
+            {alert.details && (
+              <pre className="overflow-x-auto rounded-md bg-muted p-4 text-xs">
+                {JSON.stringify(alert.details, null, 2)}
+              </pre>
+            )}
             {alert.active && (
-              <>
+              <div className="flex flex-wrap gap-2">
                 {!alert.acknowledged_at && (
                   <Button
                     type="button"
@@ -152,14 +163,16 @@ export default function AlertsPage() {
                 >
                   解决
                 </Button>
-              </>
+              </div>
             )}
           </CardContent>
         </Card>
       ))}
       {!alerts.length && (
         <Card>
-          <CardContent>没有匹配的告警。</CardContent>
+          <CardContent className="py-12 text-center text-muted-foreground">
+            没有匹配的告警。
+          </CardContent>
         </Card>
       )}
       <PaginationControls

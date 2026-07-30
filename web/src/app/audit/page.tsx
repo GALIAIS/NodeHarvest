@@ -1,10 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Download, RefreshCw } from "lucide-react";
 import { AuthRequired } from "@/components/auth-required";
 import { useLiveRefresh } from "@/components/live-provider";
+import { PageHeader } from "@/components/page-header";
 import { PaginationControls } from "@/components/pagination-controls";
 import { useSession } from "@/components/session-provider";
+import { StatusBadge } from "@/components/status-badge";
+import { TableEmpty } from "@/components/table-empty";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -101,10 +105,29 @@ export default function AuditPage() {
 
   return (
     <>
-      <header className="space-y-1">
-        <h1 className="text-3xl font-bold tracking-tight">审计</h1>
-        <p className="text-muted-foreground">查询并导出当前租户的操作记录。</p>
-      </header>
+      <PageHeader
+        title="审计"
+        description={"查询并导出当前租户的操作记录，共 " + total + " 条。"}
+        actions={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setCursorStack([]);
+                void load();
+              }}
+            >
+              <RefreshCw />
+              刷新
+            </Button>
+            <Button type="button" disabled={!visible.length} onClick={download}>
+              <Download />
+              导出 JSON
+            </Button>
+          </>
+        }
+      />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>加载失败</AlertTitle>
@@ -116,54 +139,50 @@ export default function AuditPage() {
           <CardTitle>筛选</CardTitle>
           <CardDescription>关键字仅筛选当前已加载结果。</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <Label htmlFor="audit-from">开始日期</Label>
-          <Input
-            id="audit-from"
-            type="date"
-            value={from}
-            max={to || undefined}
-            onChange={(event) => setFrom(event.target.value)}
-          />
-          <Label htmlFor="audit-to">结束日期</Label>
-          <Input
-            id="audit-to"
-            type="date"
-            value={to}
-            min={from || undefined}
-            onChange={(event) => setTo(event.target.value)}
-          />
-          <Label htmlFor="audit-query">关键字</Label>
-          <Input
-            id="audit-query"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="actor、action 或 detail"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              setCursorStack([]);
-              void load();
-            }}
-          >
-            刷新
-          </Button>
-          <Button type="button" disabled={!visible.length} onClick={download}>
-            导出 JSON
-          </Button>
+        <CardContent>
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <Label htmlFor="audit-from">开始日期</Label>
+              <Input
+                id="audit-from"
+                type="date"
+                value={from}
+                max={to || undefined}
+                onChange={(event) => setFrom(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="audit-to">结束日期</Label>
+              <Input
+                id="audit-to"
+                type="date"
+                value={to}
+                min={from || undefined}
+                onChange={(event) => setTo(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="audit-query">关键字</Label>
+              <Input
+                id="audit-query"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="actor、action 或 detail"
+              />
+            </div>
+          </div>
         </CardContent>
       </Card>
       <Card>
         <CardHeader>
           <CardTitle>操作记录</CardTitle>
+          <CardDescription>关键字仅筛选当前页已加载的记录。</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>ID</TableHead>
+                <TableHead className="text-right">ID</TableHead>
                 <TableHead>时间</TableHead>
                 <TableHead>操作人</TableHead>
                 <TableHead>动作</TableHead>
@@ -173,17 +192,17 @@ export default function AuditPage() {
             <TableBody>
               {visible.map((entry) => (
                 <TableRow key={entry.id}>
-                  <TableCell>{entry.id}</TableCell>
+                  <TableCell className="text-right font-mono text-xs tabular-nums">
+                    {entry.id}
+                  </TableCell>
                   <TableCell>{formatTime(entry.at)}</TableCell>
-                  <TableCell>{entry.actor}</TableCell>
-                  <TableCell>{entry.action}</TableCell>
-                  <TableCell>{entry.detail || "—"}</TableCell>
+                  <TableCell className="font-mono text-xs">{entry.actor}</TableCell>
+                  <TableCell><StatusBadge status={entry.action}>{entry.action}</StatusBadge></TableCell>
+                  <TableCell className="max-w-xl whitespace-normal">{entry.detail || "—"}</TableCell>
                 </TableRow>
               ))}
               {!visible.length && (
-                <TableRow>
-                  <TableCell colSpan={5}>没有匹配的审计记录。</TableCell>
-                </TableRow>
+                <TableEmpty colSpan={5}>没有匹配的审计记录。</TableEmpty>
               )}
             </TableBody>
           </Table>

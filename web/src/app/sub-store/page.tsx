@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Copy, ExternalLink } from "lucide-react";
 import { AuthRequired } from "@/components/auth-required";
+import { PageHeader } from "@/components/page-header";
 import { useSession } from "@/components/session-provider";
+import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -79,10 +81,10 @@ export default function SubStorePage() {
 
   return (
     <>
-      <header className="space-y-1">
-        <h1 className="text-3xl font-bold tracking-tight">Sub-Store 订阅工坊</h1>
-        <p className="text-muted-foreground">使用 NodeHarvest 订阅作为 Sub-Store 数据源。</p>
-      </header>
+      <PageHeader
+        title="Sub-Store 订阅工坊"
+        description="将 NodeHarvest 发布结果接入 Sub-Store 进行订阅加工。"
+      />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>加载失败</AlertTitle>
@@ -102,24 +104,33 @@ export default function SubStorePage() {
             <CardDescription>Sub-Store {subStore.version}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Badge>已启用</Badge>
+            <StatusBadge status="enabled">已启用</StatusBadge>
             {Object.entries(sources).map(([format, value]) => (
-              <p key={format}>
-                {format + ": " + value}
+              <div key={format} className="space-y-2 rounded-md border p-4">
+                <p className="text-sm font-medium">{format}</p>
+                <p className="break-all font-mono text-xs text-muted-foreground">{value}</p>
                 <Button type="button" size="sm" variant="outline" onClick={() => void copy(value, format)}>
-                  {copied === format ? "已复制" : "复制"}
+                  <Copy />
+                  {copied === format ? "已复制" : "复制数据源"}
                 </Button>
-              </p>
+              </div>
             ))}
             <Button asChild variant="secondary">
               <a href={subStore.frontend_url} target="_blank" rel="noreferrer">
+                <ExternalLink />
                 打开 Sub-Store
               </a>
             </Button>
           </CardContent>
         </Card>
       )}
-      {!config && !error && <p>正在加载 Sub-Store…</p>}
+      {!config && !error && (
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground">
+            正在加载 Sub-Store…
+          </CardContent>
+        </Card>
+      )}
     </>
   );
 }

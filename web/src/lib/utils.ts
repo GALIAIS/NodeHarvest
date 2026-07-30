@@ -39,3 +39,8 @@ export function formatPercent(value?: number | null, digits = 0) {
   if (value == null || Number.isNaN(value)) return "—";
   return (value * 100).toFixed(digits) + "%";
 }
+
+export function formatNumber(value?: number | null, digits = 1) {
+  if (value == null || Number.isNaN(value)) return "—";
+  return value.toLocaleString("zh-CN", { maximumFractionDigits: digits });
+}

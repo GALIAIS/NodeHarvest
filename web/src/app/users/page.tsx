@@ -2,12 +2,15 @@
 
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
+import { Plus, RefreshCw } from "lucide-react";
 import { AuthRequired } from "@/components/auth-required";
 import { useLiveRefresh } from "@/components/live-provider";
+import { PageHeader } from "@/components/page-header";
 import { PaginationControls } from "@/components/pagination-controls";
 import { useSession } from "@/components/session-provider";
+import { StatusBadge } from "@/components/status-badge";
+import { TableEmpty } from "@/components/table-empty";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -18,6 +21,13 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -106,10 +116,16 @@ export default function UsersPage() {
 
   return (
     <>
-      <header className="space-y-1">
-        <h1 className="text-3xl font-bold tracking-tight">用户</h1>
-        <p className="text-muted-foreground">管理本地用户与角色。</p>
-      </header>
+      <PageHeader
+        title="用户"
+        description={"管理本地账户、角色与启用状态，共 " + total + " 个用户。"}
+        actions={
+          <Button type="button" variant="outline" onClick={() => void load(currentCursor)}>
+            <RefreshCw />
+            刷新
+          </Button>
+        }
+      />
       {error && (
         <Alert variant="destructive">
           <AlertTitle>操作失败</AlertTitle>
@@ -123,42 +139,56 @@ export default function UsersPage() {
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={create}>
-            <Label htmlFor="user-name">用户名</Label>
-            <Input
-              id="user-name"
-              value={form.username}
-              onChange={(event) => setForm({ ...form, username: event.target.value })}
-              required
-            />
-            <Label htmlFor="user-email">邮箱</Label>
-            <Input
-              id="user-email"
-              type="email"
-              value={form.email}
-              onChange={(event) => setForm({ ...form, email: event.target.value })}
-            />
-            <Label htmlFor="user-password">初始密码</Label>
-            <Input
-              id="user-password"
-              type="password"
-              minLength={12}
-              value={form.password}
-              onChange={(event) => setForm({ ...form, password: event.target.value })}
-              required
-            />
-            <p>角色</p>
-            {(["viewer", "operator", "admin"] as const).map((role) => (
-              <Button
-                key={role}
-                type="button"
-                variant={form.role === role ? "secondary" : "outline"}
-                aria-pressed={form.role === role}
-                onClick={() => setForm({ ...form, role })}
-              >
-                {role}
-              </Button>
-            ))}
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="space-y-2">
+                <Label htmlFor="user-name">用户名</Label>
+                <Input
+                  id="user-name"
+                  value={form.username}
+                  onChange={(event) => setForm({ ...form, username: event.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="user-email">邮箱</Label>
+                <Input
+                  id="user-email"
+                  type="email"
+                  value={form.email}
+                  onChange={(event) => setForm({ ...form, email: event.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="user-password">初始密码</Label>
+                <Input
+                  id="user-password"
+                  type="password"
+                  minLength={12}
+                  value={form.password}
+                  onChange={(event) => setForm({ ...form, password: event.target.value })}
+                  required
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="user-role">角色</Label>
+                <Select
+                  value={form.role}
+                  onValueChange={(role) => setForm({ ...form, role })}
+                >
+                  <SelectTrigger id="user-role" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="viewer">viewer</SelectItem>
+                    <SelectItem value="operator">operator</SelectItem>
+                    <SelectItem value="admin">admin</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <Button type="submit" disabled={busy === "create"}>
+              <Plus />
               {busy === "create" ? "创建中…" : "创建用户"}
             </Button>
           </form>
@@ -167,6 +197,7 @@ export default function UsersPage() {
       <Card>
         <CardHeader>
           <CardTitle>用户列表</CardTitle>
+          <CardDescription>启停账号不会删除历史审计记录。</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -184,13 +215,13 @@ export default function UsersPage() {
             <TableBody>
               {users.map((user) => (
                 <TableRow key={user.id}>
-                  <TableCell>{user.username}</TableCell>
+                  <TableCell className="font-medium">{user.username}</TableCell>
                   <TableCell>{user.email || "—"}</TableCell>
-                  <TableCell>{user.role}</TableCell>
+                  <TableCell><StatusBadge status={user.role}>{user.role}</StatusBadge></TableCell>
                   <TableCell>
-                    <Badge variant={user.enabled ? "default" : "secondary"}>
+                    <StatusBadge status={user.enabled ? "enabled" : "disabled"}>
                       {user.enabled ? "启用" : "停用"}
-                    </Badge>
+                    </StatusBadge>
                   </TableCell>
                   <TableCell>{formatTime(user.last_login_at)}</TableCell>
                   <TableCell>{formatTime(user.created_at)}</TableCell>
@@ -208,9 +239,7 @@ export default function UsersPage() {
                 </TableRow>
               ))}
               {!users.length && (
-                <TableRow>
-                  <TableCell colSpan={7}>暂无用户。</TableCell>
-                </TableRow>
+                <TableEmpty colSpan={7}>暂无用户。</TableEmpty>
               )}
             </TableBody>
           </Table>
