@@ -70,7 +70,7 @@ export default function LoginPage() {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      <Card>
+      <Card className="mx-auto max-w-md">
         <CardHeader>
           <CardTitle>账户登录</CardTitle>
           <CardDescription>使用租户隔离的 RBAC 会话。</CardDescription>
