@@ -69,6 +69,33 @@ func TestRenderClashQuotesUntrustedScalars(t *testing.T) {
 	}
 }
 
+func TestRenderClashMakesProxyNamesUnique(t *testing.T) {
+	nodes := []*model.Node{
+		{Protocol: model.ProtoSS, Name: "duplicate", Server: "one.example.com", Port: 443, Method: "aes-128-gcm", Password: "secret"},
+		{Protocol: model.ProtoSS, Name: "duplicate", Server: "two.example.com", Port: 443, Method: "aes-128-gcm", Password: "secret"},
+		{Protocol: model.ProtoSS, Name: "duplicate #2", Server: "three.example.com", Port: 443, Method: "aes-128-gcm", Password: "secret"},
+		{Protocol: model.ProtoSS, Name: "duplicate", Server: "four.example.com", Port: 443, Method: "aes-128-gcm", Password: "secret"},
+	}
+	var parsed struct {
+		Proxies []struct {
+			Name string `yaml:"name"`
+		} `yaml:"proxies"`
+	}
+	if err := yaml.Unmarshal([]byte(RenderClash(nodes)), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Proxies) != len(nodes) {
+		t.Fatalf("got %d proxies, want %d", len(parsed.Proxies), len(nodes))
+	}
+	names := make(map[string]struct{}, len(parsed.Proxies))
+	for _, proxy := range parsed.Proxies {
+		if _, exists := names[proxy.Name]; exists {
+			t.Fatalf("duplicate proxy name %q", proxy.Name)
+		}
+		names[proxy.Name] = struct{}{}
+	}
+}
+
 func TestRenderClashKeepsTLSVerificationByDefault(t *testing.T) {
 	secure := RenderClash([]*model.Node{{
 		Protocol: model.ProtoTrojan, Name: "secure", Server: "example.com", Port: 443, Password: "secret",
