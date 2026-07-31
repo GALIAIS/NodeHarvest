@@ -160,6 +160,8 @@ sudo APP_DIR=/opt/nodeharvest bash deploy/rollback.sh VERSION
 | `NODE_HARVEST_OBJECT_STORE_SECRET_KEY` | 对象存储 secret |
 | `NODE_HARVEST_ALERT_WEBHOOK_SECRET` | 告警 HMAC secret |
 | `NODE_HARVEST_ALLOW_QUERY_TOKEN` | 是否允许 `?token=` 携带订阅凭据，默认 `0` |
+| `NODE_HARVEST_SINGBOX` | 非容器部署的 sing-box 可执行文件路径 |
+| `NODE_HARVEST_MIHOMO` | 非容器部署的 Mihomo 可执行文件路径 |
 | `NODE_HARVEST_SUB_STORE_*` | Compose 自动注入的 Sub-Store 开关、URL、路径和版本 |
 | `NODE_HARVEST_TRUSTED_PROXIES` | 逗号分隔的反代 CIDR；Compose 默认信任内部私网 |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP/HTTP endpoint |

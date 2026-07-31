@@ -69,7 +69,7 @@ type Node struct {
 	// AI 站点可达（需代理链路或启发式）
 	AIAccess map[string]*AIProbeResult `json:"ai_access,omitempty"`
 
-	// 真实协议拨测（xray/sing-box）
+	// 真实协议拨测（xray/sing-box/mihomo）
 	Dial     *DialResult `json:"dial,omitempty"`
 	Verified bool        `json:"verified"` // 最近一次真实拨测通过
 
@@ -112,16 +112,66 @@ type PurityResult struct {
 
 // DialResult 真实协议拨测结果
 type DialResult struct {
-	OK            bool      `json:"ok"`
-	LatencyMS     int64     `json:"latency_ms"`
-	StatusCode    int       `json:"status_code,omitempty"`
-	Target        string    `json:"target,omitempty"`
-	Engine        string    `json:"engine,omitempty"` // sing-box | xray
-	HTTPMS        int64     `json:"http_ms,omitempty"`
-	DownloadBytes int64     `json:"download_bytes,omitempty"`
-	ThroughputBPS int64     `json:"throughput_bps,omitempty"`
-	Error         string    `json:"error,omitempty"`
-	TestedAt      time.Time `json:"tested_at,omitempty"`
+	OK            bool          `json:"ok"`
+	LatencyMS     int64         `json:"latency_ms"`
+	StatusCode    int           `json:"status_code,omitempty"`
+	Target        string        `json:"target,omitempty"`
+	Engine        string        `json:"engine,omitempty"` // sing-box | xray | mihomo | both
+	HTTPMS        int64         `json:"http_ms,omitempty"`
+	DownloadBytes int64         `json:"download_bytes,omitempty"`
+	ThroughputBPS int64         `json:"throughput_bps,omitempty"`
+	Error         string        `json:"error,omitempty"`
+	TestedAt      time.Time     `json:"tested_at,omitempty"`
+	Checks        []*DialResult `json:"checks,omitempty"` // both 模式下的逐引擎结果
+}
+
+// HasEngine reports whether this result includes a check by the configured
+// engine. "both" requires sing-box and Mihomo checks from the same run.
+func (r *DialResult) HasEngine(engine string) bool {
+	if r == nil {
+		return false
+	}
+	engine = strings.ToLower(strings.TrimSpace(engine))
+	if engine == "" || engine == "auto" {
+		return true
+	}
+	if engine != "both" && strings.EqualFold(r.Engine, engine) {
+		return true
+	}
+	found := map[string]bool{}
+	for _, check := range r.Checks {
+		if check != nil {
+			found[strings.ToLower(check.Engine)] = true
+		}
+	}
+	if engine == "both" {
+		return found["sing-box"] && found["mihomo"]
+	}
+	return found[engine]
+}
+
+// PassedEngine reports whether the requested engine's check passed. In "both"
+// mode, the aggregate Mihomo-authoritative result must pass and contain both checks.
+func (r *DialResult) PassedEngine(engine string) bool {
+	if r == nil {
+		return false
+	}
+	engine = strings.ToLower(strings.TrimSpace(engine))
+	if engine == "" || engine == "auto" {
+		return r.OK
+	}
+	if engine == "both" {
+		return r.OK && r.HasEngine("both")
+	}
+	if strings.EqualFold(r.Engine, engine) {
+		return r.OK
+	}
+	for _, check := range r.Checks {
+		if check != nil && strings.EqualFold(check.Engine, engine) {
+			return check.OK
+		}
+	}
+	return false
 }
 
 // Quality 多维质量指标

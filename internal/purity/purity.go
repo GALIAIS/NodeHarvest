@@ -60,15 +60,10 @@ func New(opts Options) (*Prober, error) {
 	if opts.BasePort <= 0 {
 		opts.BasePort = 21000
 	}
-	_ = os.MkdirAll(opts.WorkDir, 0o700)
-	bin, engine, err := dialer.Available()
-	if opts.Bin != "" {
-		if _, e := os.Stat(opts.Bin); e == nil {
-			bin = opts.Bin
-			engine = "sing-box"
-			err = nil
-		}
+	if err := os.MkdirAll(opts.WorkDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create purity work directory: %w", err)
 	}
+	bin, engine, err := dialer.AvailableFor(opts.Bin, "sing-box")
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +123,7 @@ func (p *Prober) testOne(ctx context.Context, n *model.Node) {
 		}
 	}()
 
-	if !dialer.Supports(n) {
+	if !dialer.SupportsEngine(n, "sing-box") {
 		res.Error = "unsupported protocol"
 		return
 	}

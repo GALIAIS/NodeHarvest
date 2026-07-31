@@ -29,6 +29,7 @@ type vmessJSON struct {
 	TLS  string `json:"tls"`
 	SNI  string `json:"sni"`
 	Alpn string `json:"alpn"`
+	FP   string `json:"fp"`
 	// Providers use both spellings and encode them as either booleans or strings.
 	AllowInsecure any `json:"allowInsecure"`
 	Insecure      any `json:"insecure"`
@@ -70,6 +71,9 @@ func parseVMess(raw, source string) (*model.Node, error) {
 		name = fmt.Sprintf("vmess-%s-%d", j.Add, port)
 	}
 	extra := map[string]string{"type": j.Type, "aid": fmt.Sprint(j.Aid)}
+	if j.FP != "" {
+		extra["fp"] = j.FP
+	}
 	if j.AllowInsecure != nil {
 		extra["allowInsecure"] = fmt.Sprint(j.AllowInsecure)
 	}
@@ -128,14 +132,18 @@ func parseVLESS(raw, source string) (*model.Node, error) {
 		RawURI:   raw,
 		Source:   source,
 		Extra: map[string]string{
-			"fp":          queryGet(q, "fp"),
-			"pbk":         queryGet(q, "pbk"),
-			"sid":         queryGet(q, "sid"),
-			"spx":         queryGet(q, "spx"),
-			"serviceName": queryGet(q, "serviceName"),
-			"headerType":  queryGet(q, "headerType"),
-			"mode":        queryGet(q, "mode"),
-			"insecure":    queryGet(q, "insecure", "allowInsecure", "skip-cert-verify"),
+			"encryption":             queryGet(q, "encryption"),
+			"fp":                     queryGet(q, "fp"),
+			"pbk":                    queryGet(q, "pbk"),
+			"sid":                    queryGet(q, "sid"),
+			"spx":                    queryGet(q, "spx"),
+			"serviceName":            queryGet(q, "serviceName"),
+			"headerType":             queryGet(q, "headerType"),
+			"mode":                   queryGet(q, "mode"),
+			"packet-encoding":        queryGet(q, "packetEncoding", "packet-encoding"),
+			"max-early-data":         queryGet(q, "ed", "max-early-data"),
+			"early-data-header-name": queryGet(q, "eh", "early-data-header-name"),
+			"insecure":               queryGet(q, "insecure", "allowInsecure", "skip-cert-verify"),
 		},
 	}
 	n.Fingerprint = n.Key()
@@ -154,9 +162,9 @@ func parseTrojan(raw, source string) (*model.Node, error) {
 		return nil, err
 	}
 	port := atoiDefault(portStr, 443)
-	pass, _ := u.User.Password()
-	if pass == "" {
-		pass = u.User.Username()
+	pass := u.User.Username()
+	if password, userPass := u.User.Password(); userPass {
+		pass += ":" + password
 	}
 	q := u.Query()
 	n := &model.Node{
@@ -174,8 +182,21 @@ func parseTrojan(raw, source string) (*model.Node, error) {
 		RawURI:   raw,
 		Source:   source,
 		Extra: map[string]string{
-			"insecure": queryGet(q, "insecure", "allowInsecure", "skip-cert-verify"),
+			"fp":                     queryGet(q, "fp"),
+			"pbk":                    queryGet(q, "pbk"),
+			"sid":                    queryGet(q, "sid"),
+			"serviceName":            queryGet(q, "serviceName"),
+			"headerType":             queryGet(q, "headerType"),
+			"mode":                   queryGet(q, "mode"),
+			"max-early-data":         queryGet(q, "ed", "max-early-data"),
+			"early-data-header-name": queryGet(q, "eh", "early-data-header-name"),
+			"insecure":               queryGet(q, "insecure", "allowInsecure", "skip-cert-verify"),
 		},
+	}
+	if security := strings.ToLower(queryGet(q, "security")); security == "reality" || n.Extra["pbk"] != "" {
+		n.Security = "reality"
+	} else {
+		n.Security = "tls"
 	}
 	n.Fingerprint = n.Key()
 	return n, nil
@@ -193,10 +214,14 @@ func parseSS(raw, source string) (*model.Node, error) {
 		name, _ = url.QueryUnescape(body[i+1:])
 		body = body[:i]
 	}
-	// 去掉 plugin 查询
+	pluginSpec := ""
 	if i := strings.Index(body, "?"); i >= 0 {
+		if q, err := url.ParseQuery(body[i+1:]); err == nil {
+			pluginSpec = q.Get("plugin")
+		}
 		body = body[:i]
 	}
+	body = strings.TrimSuffix(body, "/")
 
 	var method, password, host string
 	var port int
@@ -257,6 +282,24 @@ func parseSS(raw, source string) (*model.Node, error) {
 		RawURI:   raw,
 		Source:   source,
 	}
+	if pluginSpec != "" {
+		parts := strings.Split(pluginSpec, ";")
+		n.Extra = map[string]string{"plugin": parts[0]}
+		opts := map[string]any{}
+		for _, item := range parts[1:] {
+			key, value, found := strings.Cut(item, "=")
+			if found && key != "" {
+				opts[key] = value
+			} else if item != "" {
+				opts[item] = true
+			}
+		}
+		if len(opts) > 0 {
+			if raw, err := json.Marshal(opts); err == nil {
+				n.Extra["plugin-opts"] = string(raw)
+			}
+		}
+	}
 	n.Fingerprint = n.Key()
 	return n, nil
 }
@@ -284,15 +327,16 @@ func parseSSR(raw, source string) (*model.Node, error) {
 	if len(parts) < 6 {
 		return nil, fmt.Errorf("ssr format")
 	}
-	host := parts[0]
-	port := atoiDefault(parts[1], 0)
-	method := parts[3]
-	passB64 := parts[5]
+	offset := len(parts) - 5
+	host := strings.Trim(strings.Join(parts[:offset], ":"), "[]")
+	port := atoiDefault(parts[offset], 0)
+	method := parts[offset+2]
+	passB64 := parts[offset+4]
 	password := decodeMaybeBase64(passB64)
 
 	name := fmt.Sprintf("ssr-%s-%d", host, port)
+	q, _ := url.ParseQuery(params)
 	if params != "" {
-		q, _ := url.ParseQuery(params)
 		if r := q.Get("remarks"); r != "" {
 			if d, ok := tryDecodeBase64(r); ok {
 				name = d
@@ -311,8 +355,10 @@ func parseSSR(raw, source string) (*model.Node, error) {
 		RawURI:   raw,
 		Source:   source,
 		Extra: map[string]string{
-			"protocol": parts[2],
-			"obfs":     parts[4],
+			"protocol":       parts[offset+1],
+			"obfs":           parts[offset+3],
+			"protocol-param": decodeMaybeBase64(firstNonEmpty(q.Get("protoparam"), q.Get("protocolparam"))),
+			"obfs-param":     decodeMaybeBase64(q.Get("obfsparam")),
 		},
 	}
 	n.Fingerprint = n.Key()
@@ -323,7 +369,7 @@ func parseSSR(raw, source string) (*model.Node, error) {
 
 func parseHysteria2(raw, source string) (*model.Node, error) {
 	// hysteria2://password@host:port?params#name
-	u, err := url.Parse(raw)
+	u, ports, err := parseHysteriaURL(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -331,10 +377,10 @@ func parseHysteria2(raw, source string) (*model.Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	port := atoiDefault(portStr, 443)
-	pass, _ := u.User.Password()
-	if pass == "" {
-		pass = u.User.Username()
+	port := firstPort(portStr, 443)
+	pass := u.User.Username()
+	if password, userPass := u.User.Password(); userPass {
+		pass += ":" + password
 	}
 	q := u.Query()
 	n := &model.Node{
@@ -351,8 +397,14 @@ func parseHysteria2(raw, source string) (*model.Node, error) {
 		Extra: map[string]string{
 			"obfs":          queryGet(q, "obfs"),
 			"obfs-password": queryGet(q, "obfs-password", "obfsPassword"),
+			"fp":            queryGet(q, "fp"),
+			"fingerprint":   queryGet(q, "pinSHA256", "fingerprint"),
+			"ech":           queryGet(q, "ech"),
 			"insecure":      queryGet(q, "insecure", "allowInsecure", "skip-cert-verify"),
 		},
+	}
+	if ports != "" {
+		n.Extra["ports"] = ports
 	}
 	n.Fingerprint = n.Key()
 	return n, nil
@@ -373,6 +425,10 @@ func parseTUIC(raw, source string) (*model.Node, error) {
 	uuid := u.User.Username()
 	pass, _ := u.User.Password()
 	q := u.Query()
+	token := queryGet(q, "token")
+	if pass == "" && token == "" {
+		token, uuid = uuid, ""
+	}
 	n := &model.Node{
 		Protocol: model.ProtoTUIC,
 		Name:     parseNameFromFragment(u, fmt.Sprintf("tuic-%s-%d", host, port)),
@@ -386,9 +442,22 @@ func parseTUIC(raw, source string) (*model.Node, error) {
 		RawURI:   raw,
 		Source:   source,
 		Extra: map[string]string{
+			"token":              token,
 			"congestion_control": queryGet(q, "congestion_control", "congestion-control"),
 			"udp_relay_mode":     queryGet(q, "udp_relay_mode", "udp-relay-mode"),
-			"insecure":           queryGet(q, "insecure", "allowInsecure", "skip-cert-verify"),
+			"fp":                 queryGet(q, "fp"),
+			"fingerprint":        queryGet(q, "fingerprint", "pinSHA256"),
+			"name-cert-verify":   queryGet(q, "name-cert-verify", "name_cert_verify"),
+			"ip":                 queryGet(q, "ip"),
+			"heartbeat-interval": queryGet(q, "heartbeat-interval", "heartbeat_interval"),
+			"disable-sni":        queryGet(q, "disable-sni", "disable_sni"),
+			"reduce-rtt":         queryGet(q, "reduce-rtt", "reduce_rtt"),
+			"request-timeout":    queryGet(q, "request-timeout", "request_timeout"),
+			"max-udp-relay-packet-size": queryGet(q,
+				"max-udp-relay-packet-size", "max_udp_relay_packet_size"),
+			"fast-open":        queryGet(q, "fast-open", "fast_open"),
+			"max-open-streams": queryGet(q, "max-open-streams", "max_open_streams"),
+			"insecure":         queryGet(q, "insecure", "allowInsecure", "skip-cert-verify"),
 		},
 	}
 	n.Fingerprint = n.Key()
@@ -419,6 +488,56 @@ func splitHostPort(hostport, defaultPort string) (string, string, error) {
 	}
 	// no port
 	return hostport, defaultPort, nil
+}
+
+func firstPort(spec string, fallback int) int {
+	first := strings.TrimSpace(strings.SplitN(spec, ",", 2)[0])
+	first = strings.TrimSpace(strings.SplitN(first, "-", 2)[0])
+	return atoiDefault(first, fallback)
+}
+
+func parseHysteriaURL(raw string) (*url.URL, string, error) {
+	parsed, err := url.Parse(raw)
+	if err == nil {
+		return parsed, "", nil
+	}
+	schemeEnd := strings.Index(raw, "://")
+	if schemeEnd < 0 {
+		return nil, "", err
+	}
+	authorityStart := schemeEnd + 3
+	authorityEnd := len(raw)
+	if offset := strings.IndexAny(raw[authorityStart:], "/?#"); offset >= 0 {
+		authorityEnd = authorityStart + offset
+	}
+	authority := raw[authorityStart:authorityEnd]
+	hostStart := strings.LastIndex(authority, "@") + 1
+	hostPort := authority[hostStart:]
+	portColon := strings.LastIndex(hostPort, ":")
+	if strings.HasPrefix(hostPort, "[") {
+		portColon = strings.LastIndex(hostPort, "]:")
+		if portColon >= 0 {
+			portColon++
+		}
+	}
+	if portColon < 0 {
+		return nil, "", err
+	}
+	ports := hostPort[portColon+1:]
+	if !strings.ContainsAny(ports, ",-") {
+		return nil, "", err
+	}
+	port := firstPort(ports, 0)
+	if port <= 0 {
+		return nil, "", err
+	}
+	portStart := authorityStart + hostStart + portColon + 1
+	sanitized := raw[:portStart] + strconv.Itoa(port) + raw[authorityEnd:]
+	parsed, parseErr := url.Parse(sanitized)
+	if parseErr != nil {
+		return nil, "", err
+	}
+	return parsed, ports, nil
 }
 
 func anyToInt(v any) int {

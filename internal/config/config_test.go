@@ -13,6 +13,9 @@ func TestRepositoryConfigSourcesAreNormalizedByPriority(t *testing.T) {
 	if len(cfg.Sources) < 130 {
 		t.Fatalf("catalog sources=%d", len(cfg.Sources))
 	}
+	if cfg.Dial.Engine != "both" || cfg.Dial.VerifiedTTLHours != 6 || cfg.Dial.SamplePercent != 0 {
+		t.Fatalf("repository dial policy is not full Mihomo verification: %+v", cfg.Dial)
+	}
 	sources := cfg.EnabledSources()
 	if len(sources) < 125 {
 		t.Fatalf("enabled sources=%d", len(sources))

@@ -102,13 +102,28 @@ func cloneNode(n *model.Node) *model.Node {
 		}
 	}
 	if n.Dial != nil {
-		result := *n.Dial
-		cp.Dial = &result
+		cp.Dial = cloneDial(n.Dial)
 	}
 	if n.Purity != nil {
 		result := *n.Purity
 		result.Notes = append([]string(nil), n.Purity.Notes...)
 		cp.Purity = &result
+	}
+	return &cp
+}
+
+func cloneDial(result *model.DialResult) *model.DialResult {
+	if result == nil {
+		return nil
+	}
+	cp := *result
+	cp.Checks = make([]*model.DialResult, 0, len(result.Checks))
+	for _, check := range result.Checks {
+		if check != nil {
+			item := *check
+			item.Checks = nil
+			cp.Checks = append(cp.Checks, &item)
+		}
 	}
 	return &cp
 }
@@ -454,18 +469,20 @@ func (s *Store) ListJobsPage(limit int, cursor string) []*model.Job {
 
 // NodeFilter 列表过滤
 type NodeFilter struct {
-	Protocol     string
-	Source       string
-	Grade        string
-	Country      string // ISO 国家码，如 US / JP；XX=未知
-	AliveOnly    bool
-	MinScore     float64
-	AIKey        string
-	Search       string
-	Limit        int
-	HighQuality  bool
-	VerifiedOnly bool // 仅真实拨测通过
-	SeenAfter    time.Time
+	Protocol        string
+	Source          string
+	Grade           string
+	Country         string // ISO 国家码，如 US / JP；XX=未知
+	AliveOnly       bool
+	MinScore        float64
+	AIKey           string
+	Search          string
+	Limit           int
+	HighQuality     bool
+	VerifiedOnly    bool // 仅真实拨测通过
+	SeenAfter       time.Time
+	DialTestedAfter time.Time
+	DialEngine      string
 }
 
 func (f NodeFilter) Match(n *model.Node) bool {
@@ -504,6 +521,13 @@ func (f NodeFilter) Match(n *model.Node) bool {
 		return false
 	}
 	if f.VerifiedOnly && !n.Verified {
+		return false
+	}
+	if !f.DialTestedAfter.IsZero() &&
+		(n.Dial == nil || n.Dial.TestedAt.IsZero() || n.Dial.TestedAt.Before(f.DialTestedAfter)) {
+		return false
+	}
+	if f.DialEngine != "" && (n.Dial == nil || !n.Dial.PassedEngine(f.DialEngine)) {
 		return false
 	}
 	if !f.SeenAfter.IsZero() && !n.LastSeenAt.IsZero() && n.LastSeenAt.Before(f.SeenAfter) {

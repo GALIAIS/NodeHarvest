@@ -8,7 +8,7 @@
 
 - 131 个完整采集源目录，支持 URI、Base64、Clash YAML，带优先级、大小上限、健康分、自动冷却和单源探测。
 - vmess、vless、trojan、ss、ssr、hysteria2、tuic 解析、去重、来源追踪和可选端口折叠。
-- TCP/TLS 多轮质量测试，以及 sing-box / xray 独立进程真实代理 HTTP 下载测试。
+- TCP/TLS 多轮质量测试，以及 sing-box / xray / Mihomo 独立进程真实代理 HTTP 下载测试。
 - 可解释评分 v2：延迟、成功率、7 日稳定性、TLS、HTTP、吞吐量。
 - SQLite 零服务运行；生产可切 PostgreSQL、Redis、MinIO/S3。
 - 持久化优先级队列、租约、重试、死信、取消、独立 Worker 和事件时间线。
@@ -30,7 +30,7 @@ Public /sub ── Caddy/WAF ── API replicas ── Redis cache/lock
 Admin console ── local account/RBAC ─┤
                                   ├── PostgreSQL
 Scheduler/API ── durable queue ───┤
-                                  ├── Worker replicas ── sing-box/xray
+                                  ├── Worker replicas ── sing-box/Mihomo
                                   └── S3/MinIO artifacts
 
 Operator session ── Caddy auth ── Sub-Store (isolated origin + persistent data)
@@ -48,7 +48,7 @@ Prometheus ← /metrics       OTLP collector → Jaeger
 | Node.js | 24（构建控制台） |
 | Docker | Compose v2（生产栈） |
 | Sub-Store | 2.36.22（生产 Compose） |
-| 可选 | PostgreSQL 17、Redis 8、S3/MinIO、sing-box 1.13.12 或 xray |
+| 可选 | PostgreSQL 17、Redis 8、S3/MinIO、sing-box 1.13.12、Mihomo 1.19.29 或 xray |
 
 ## 本地启动
 

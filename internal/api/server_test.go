@@ -334,6 +334,7 @@ func TestCachedSubscriptionHonorsTokenCountryACL(t *testing.T) {
 	cfg.Geo.Enabled = false
 	cfg.Publish.PreRender = false
 	cfg.Export.Dir = t.TempDir()
+	cfg.Dial.Enabled = false
 	st, err := store.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

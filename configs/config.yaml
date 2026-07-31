@@ -632,7 +632,7 @@ schedule:
   enabled: true
   interval_min: 30           # 每 30 分钟
   job: full                  # full | fetch | quality
-  run_on_start: false        # 启动立刻跑一轮（调试可 true）
+  run_on_start: true         # 部署后立即刷新并建立 Mihomo verified 池
   skip_ai: true              # 定时全流程跳过 AI，更快
   max_test: 6000
   rounds: 2
@@ -672,20 +672,22 @@ geo:
 
 # 企业安全 / 限流
 
-# 真实协议拨测（需安装 sing-box）
+# 真实协议拨测（镜像内置 sing-box + Mihomo）
 dial:
   enabled: true
-  bin: ""                      # 空=PATH 自动查找；部署用 NODE_HARVEST_SINGBOX
-  engine: sing-box
+  bin: ""                     # sing-box/xray；部署用 NODE_HARVEST_SINGBOX
+  mihomo_bin: ""              # 部署用 NODE_HARVEST_MIHOMO
+  engine: both                # Mihomo 结果决定 verified，同时保留 sing-box 对照
   concurrency: 4
   timeout_sec: 18
   test_url: "https://www.cloudflare.com/cdn-cgi/trace"
+  verified_ttl_hours: 6       # 超时后重测，发布池也只接受该时限内结果
   download_bytes: 262144      # 真实链路吞吐采样最多读取 256 KiB
-  sample_percent: 10          # quality 后默认分层抽测 10%
+  sample_percent: 0           # 0=不抽样
   max_nodes: 0               # 0=不限制，HQ 有多少测多少
   batch_size: 200            # 多轮真拨每批数量
   after_quality: true        # quality/full 后自动真拨
-  after_quality_max: 0       # 0=按 sample_percent 分层抽测
+  after_quality_max: 0       # 0=全部 HQ；近期已测节点自动跳过
 
 security:
   allow_query_token: false   # 避免 token 泄漏到访问日志、历史与 Referer

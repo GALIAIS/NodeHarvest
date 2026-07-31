@@ -24,6 +24,7 @@ x-app-environment: &app-environment
   NODE_HARVEST_OBJECT_STORE_AUTO_CREATE: "1"
   NODE_HARVEST_PUBLIC_URL: https://${PUBLIC_DOMAIN:?set PUBLIC_DOMAIN}
   NODE_HARVEST_SINGBOX: /app/bin/sing-box
+  NODE_HARVEST_MIHOMO: /app/bin/mihomo
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
 
 # 运行配置必须显式挂载：镜像里那份会随每次镜像更新被覆盖，而 security.*

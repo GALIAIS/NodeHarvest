@@ -17,6 +17,9 @@ func BuildXrayOutbound(n *model.Node) (map[string]any, error) {
 	var settings map[string]any
 	switch n.Protocol {
 	case model.ProtoSS:
+		if n.Extra["plugin"] != "" {
+			return nil, fmt.Errorf("xray external ss plugins are not bundled")
+		}
 		if n.Password == "" {
 			return nil, fmt.Errorf("ss missing password")
 		}

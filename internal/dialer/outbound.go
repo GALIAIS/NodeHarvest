@@ -20,6 +20,9 @@ func BuildOutbound(n *model.Node) (map[string]any, error) {
 	}
 	switch n.Protocol {
 	case model.ProtoSS:
+		if n.Extra["plugin"] != "" {
+			return nil, fmt.Errorf("sing-box external ss plugins are not bundled")
+		}
 		method := n.Method
 		if method == "" {
 			method = "aes-256-gcm"
@@ -56,6 +59,15 @@ func BuildOutbound(n *model.Node) (map[string]any, error) {
 		}
 		if n.ALPN != "" {
 			tls["alpn"] = splitCSV(n.ALPN)
+		}
+		if fp := extra["fp"]; fp != "" {
+			tls["utls"] = map[string]any{"enabled": true, "fingerprint": fp}
+		}
+		if strings.EqualFold(n.Security, "reality") || extra["pbk"] != "" {
+			tls["utls"] = map[string]any{"enabled": true, "fingerprint": firstNonEmpty(extra["fp"], "chrome")}
+			tls["reality"] = map[string]any{
+				"enabled": true, "public_key": extra["pbk"], "short_id": extra["sid"],
+			}
 		}
 		o["tls"] = tls
 		if tr := buildTransport(n); tr != nil {
@@ -95,6 +107,9 @@ func BuildOutbound(n *model.Node) (map[string]any, error) {
 			}
 			if fp := extra["fp"]; fp != "" {
 				tls["utls"] = map[string]any{"enabled": true, "fingerprint": fp}
+			}
+			if n.ALPN != "" {
+				tls["alpn"] = splitCSV(n.ALPN)
 			}
 			o["tls"] = tls
 		}
@@ -159,12 +174,58 @@ func BuildOutbound(n *model.Node) (map[string]any, error) {
 			"server_port": n.Port,
 			"password":    n.Password,
 		}
+		if ports := singBoxServerPorts(extra["ports"]); len(ports) > 0 {
+			delete(o, "server_port")
+			o["server_ports"] = ports
+		}
+		if interval := singBoxHopInterval(extra["hop-interval"]); interval != "" {
+			o["hop_interval"] = interval
+		}
 		tls := map[string]any{
 			"enabled":     true,
 			"server_name": firstNonEmpty(n.SNI, n.Host, n.Server),
 		}
 		if n.SkipTLSVerify() {
 			tls["insecure"] = true
+		}
+		if n.ALPN != "" {
+			tls["alpn"] = splitCSV(n.ALPN)
+		}
+		if fp := extra["fp"]; fp != "" {
+			tls["utls"] = map[string]any{"enabled": true, "fingerprint": fp}
+		}
+		o["tls"] = tls
+		if obfsType := extra["obfs"]; obfsType != "" {
+			o["obfs"] = map[string]any{"type": obfsType, "password": extra["obfs-password"]}
+		}
+		return o, nil
+
+	case model.ProtoTUIC:
+		if n.UUID == "" || n.Password == "" {
+			return nil, fmt.Errorf("tuic missing uuid/password")
+		}
+		o := map[string]any{
+			"type":               "tuic",
+			"tag":                "proxy",
+			"server":             n.Server,
+			"server_port":        n.Port,
+			"uuid":               n.UUID,
+			"password":           n.Password,
+			"congestion_control": firstNonEmpty(extra["congestion_control"], "cubic"),
+			"udp_relay_mode":     firstNonEmpty(extra["udp_relay_mode"], "native"),
+		}
+		tls := map[string]any{
+			"enabled":     true,
+			"server_name": firstNonEmpty(n.SNI, n.Host, n.Server),
+		}
+		if n.SkipTLSVerify() {
+			tls["insecure"] = true
+		}
+		if n.ALPN != "" {
+			tls["alpn"] = splitCSV(n.ALPN)
+		}
+		if fp := extra["fp"]; fp != "" {
+			tls["utls"] = map[string]any{"enabled": true, "fingerprint": fp}
 		}
 		o["tls"] = tls
 		return o, nil
@@ -258,15 +319,67 @@ func nonEmptySlice(s string) []string {
 	return []string{s}
 }
 
-// Supports 是否可尝试真实拨测
+func singBoxServerPorts(value string) []string {
+	var ports []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if left, right, found := strings.Cut(item, "-"); found {
+			if _, err := strconv.Atoi(strings.TrimSpace(left)); err != nil {
+				continue
+			}
+			if _, err := strconv.Atoi(strings.TrimSpace(right)); err != nil {
+				continue
+			}
+			item = strings.TrimSpace(left) + ":" + strings.TrimSpace(right)
+		} else if _, err := strconv.Atoi(item); err != nil {
+			continue
+		}
+		ports = append(ports, item)
+	}
+	return ports
+}
+
+func singBoxHopInterval(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.Contains(value, "-") {
+		return ""
+	}
+	if _, err := strconv.Atoi(value); err == nil {
+		return value + "s"
+	}
+	return value
+}
+
+// Supports 是否有至少一个内置引擎可尝试真实拨测。
 func Supports(n *model.Node) bool {
+	return SupportsEngine(n, "mihomo")
+}
+
+// SupportsEngine reports protocol support for a specific configured engine.
+// "both" is Mihomo-authoritative and therefore accepts every Mihomo protocol.
+func SupportsEngine(n *model.Node, engine string) bool {
 	if n == nil {
 		return false
 	}
-	switch n.Protocol {
-	case model.ProtoSS, model.ProtoTrojan, model.ProtoVMess, model.ProtoVLESS, model.ProtoHysteria2:
-		return true
-	default:
+	engine = strings.ToLower(strings.TrimSpace(engine))
+	network := strings.ToLower(strings.TrimSpace(n.Network))
+	if (network == "xhttp" || network == "splithttp") && engine != "mihomo" && engine != "both" {
 		return false
 	}
+	switch n.Protocol {
+	case model.ProtoSS:
+		return n.Extra["plugin"] == "" || engine == "mihomo" || engine == "both"
+	case model.ProtoTrojan, model.ProtoVMess, model.ProtoVLESS:
+		return true
+	case model.ProtoHysteria2:
+		return engine != "xray"
+	case model.ProtoTUIC:
+		return engine != "xray" && (n.Extra["token"] == "" || engine == "mihomo" || engine == "both")
+	case model.ProtoSSR:
+		return engine == "mihomo" || engine == "both"
+	}
+	return false
 }

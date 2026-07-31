@@ -4,7 +4,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -26,13 +28,15 @@ func looksLikeClash(content string) bool {
 		strings.Contains(low, "type: vless") ||
 		strings.Contains(low, "type: trojan") ||
 		strings.Contains(low, "type: ss") ||
-		strings.Contains(low, "type: hysteria") {
+		strings.Contains(low, "type: hysteria") ||
+		strings.Contains(low, "type: tuic") {
 		return strings.Contains(low, "server:")
 	}
 	return false
 }
 
-// ParseClash 从 Clash YAML 提取节点并还原为 URI
+// ParseClash 从 Clash/Mihomo YAML 提取节点。直接映射字段，避免经 URI
+// 中转时丢失 WebSocket、gRPC、Reality 和插件参数。
 func ParseClash(content, source string) []*model.Node {
 	var root map[string]any
 	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
@@ -58,28 +62,15 @@ func ParseClash(content, source string) []*model.Node {
 		if !ok {
 			continue
 		}
-		uri := clashProxyToURI(m)
-		if uri == "" {
-			if n2 := clashMapToNode(m, source); n2 != nil {
-				key := n2.Key()
-				if _, dup := seen[key]; !dup {
-					seen[key] = struct{}{}
-					nodes = append(nodes, n2)
-				}
-			}
+		n := clashMapToNode(m, source)
+		if n == nil {
 			continue
 		}
-		if _, dup := seen[uri]; dup {
+		key := n.Key()
+		if _, dup := seen[key]; dup {
 			continue
 		}
-		seen[uri] = struct{}{}
-		n, err := ParseURI(uri, source)
-		if err != nil || n == nil {
-			if n2 := clashMapToNode(m, source); n2 != nil {
-				nodes = append(nodes, n2)
-			}
-			continue
-		}
+		seen[key] = struct{}{}
 		nodes = append(nodes, n)
 	}
 	return nodes
@@ -103,7 +94,49 @@ func clashProxyToURI(m map[string]any) string {
 			return ""
 		}
 		userinfo := strings.TrimRight(base64.StdEncoding.EncodeToString([]byte(cipher+":"+password)), "=")
-		return fmt.Sprintf("ss://%s@%s:%d#%s", userinfo, server, port, frag)
+		q := url.Values{}
+		if plugin := asString(m["plugin"]); plugin != "" {
+			spec := plugin
+			if opts := asMap(m["plugin-opts"]); opts != nil {
+				keys := make([]string, 0, len(opts))
+				for key := range opts {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+				for _, key := range keys {
+					if enabled, ok := opts[key].(bool); ok && enabled {
+						spec += ";" + key
+					} else {
+						spec += ";" + key + "=" + asString(opts[key])
+					}
+				}
+			}
+			q.Set("plugin", spec)
+		}
+		query := ""
+		if len(q) > 0 {
+			query = "?" + q.Encode()
+		}
+		return fmt.Sprintf("ss://%s@%s%s#%s", userinfo, uriHostPort(server, strconv.Itoa(port)), query, frag)
+	case "ssr":
+		cipher, password := asString(m["cipher"]), asString(m["password"])
+		protocol, obfs := asString(m["protocol"]), asString(m["obfs"])
+		if cipher == "" || password == "" || protocol == "" || obfs == "" {
+			return ""
+		}
+		params := url.Values{}
+		if name != "" {
+			params.Set("remarks", rawB64(name))
+		}
+		if value := asString(m["protocol-param"]); value != "" {
+			params.Set("protoparam", rawB64(value))
+		}
+		if value := asString(m["obfs-param"]); value != "" {
+			params.Set("obfsparam", rawB64(value))
+		}
+		body := fmt.Sprintf("%s:%s:%s:%s:%s/?%s", uriHostPort(server, strconv.Itoa(port)),
+			protocol, cipher, obfs, rawB64(password), params.Encode())
+		return "ssr://" + rawB64(body)
 	case "trojan":
 		password := asString(m["password"])
 		if password == "" {
@@ -113,7 +146,23 @@ func clashProxyToURI(m map[string]any) string {
 		if sni := firstStr(m, "sni", "servername"); sni != "" {
 			q.Set("sni", sni)
 		}
-		return fmt.Sprintf("trojan://%s@%s:%d?%s#%s", url.QueryEscape(password), server, port, q.Encode(), frag)
+		if path := clashPath(m); path != "" {
+			q.Set("path", path)
+		}
+		if host := clashHost(m); host != "" {
+			q.Set("host", host)
+		}
+		applyClashURIOptions(q, m)
+		if asBool(m["skip-cert-verify"]) {
+			q.Set("allowInsecure", "1")
+		}
+		if ro := asMap(m["reality-opts"]); ro != nil {
+			q.Set("security", "reality")
+			q.Set("pbk", firstStr(ro, "public-key", "public_key"))
+			q.Set("sid", firstStr(ro, "short-id", "short_id"))
+		}
+		return fmt.Sprintf("trojan://%s@%s?%s#%s", url.QueryEscape(password),
+			uriHostPort(server, strconv.Itoa(port)), q.Encode(), frag)
 	case "vmess":
 		obj := map[string]any{
 			"v":    "2",
@@ -121,11 +170,14 @@ func clashProxyToURI(m map[string]any) string {
 			"add":  server,
 			"port": strconv.Itoa(port),
 			"id":   asString(m["uuid"]),
-			"aid":  "0",
+			"aid":  firstStr(m, "alterId", "alter-id"),
 			"scy":  firstStr(m, "cipher", "security"),
-			"net":  firstStr(m, "network", "net"),
+			"net":  firstNonEmpty(firstStr(m, "network", "net"), "tcp"),
 			"type": "none",
 			"tls":  boolToTLS(m["tls"]),
+		}
+		if obj["aid"] == "" {
+			obj["aid"] = "0"
 		}
 		if sn := firstStr(m, "servername", "sni"); sn != "" {
 			obj["sni"] = sn
@@ -135,6 +187,18 @@ func clashProxyToURI(m map[string]any) string {
 		}
 		if path := clashPath(m); path != "" {
 			obj["path"] = path
+		}
+		if alpn := asCSV(m["alpn"]); alpn != "" {
+			obj["alpn"] = alpn
+		}
+		if fp := asString(m["client-fingerprint"]); fp != "" {
+			obj["fp"] = fp
+		}
+		if asBool(m["skip-cert-verify"]) {
+			obj["allowInsecure"] = true
+		}
+		if opts := asMap(m["grpc-opts"]); opts != nil {
+			obj["path"] = firstStr(opts, "grpc-service-name", "serviceName")
 		}
 		b, err := json.Marshal(obj)
 		if err != nil {
@@ -147,7 +211,7 @@ func clashProxyToURI(m map[string]any) string {
 			return ""
 		}
 		q := url.Values{}
-		q.Set("encryption", "none")
+		q.Set("encryption", firstNonEmpty(asString(m["encryption"]), "none"))
 		net := firstStr(m, "network", "net")
 		if net != "" {
 			q.Set("type", net)
@@ -169,6 +233,13 @@ func clashProxyToURI(m map[string]any) string {
 		if host := clashHost(m); host != "" {
 			q.Set("host", host)
 		}
+		applyClashURIOptions(q, m)
+		if value := asString(m["packet-encoding"]); value != "" {
+			q.Set("packetEncoding", value)
+		}
+		if asBool(m["skip-cert-verify"]) {
+			q.Set("allowInsecure", "1")
+		}
 		if ro, ok := m["reality-opts"].(map[string]any); ok {
 			if pbk := asString(ro["public-key"]); pbk != "" {
 				q.Set("pbk", pbk)
@@ -177,17 +248,110 @@ func clashProxyToURI(m map[string]any) string {
 				q.Set("sid", sid)
 			}
 		}
-		return fmt.Sprintf("vless://%s@%s:%d?%s#%s", uuid, server, port, q.Encode(), frag)
+		return fmt.Sprintf("vless://%s@%s?%s#%s", uuid,
+			uriHostPort(server, strconv.Itoa(port)), q.Encode(), frag)
 	case "hysteria2", "hy2":
 		password := firstStr(m, "password", "auth")
 		q := url.Values{}
 		if sni := firstStr(m, "sni", "servername"); sni != "" {
 			q.Set("sni", sni)
 		}
-		return fmt.Sprintf("hysteria2://%s@%s:%d?%s#%s", url.QueryEscape(password), server, port, q.Encode(), frag)
+		if value := asString(m["obfs"]); value != "" {
+			q.Set("obfs", value)
+		}
+		if value := asString(m["obfs-password"]); value != "" {
+			q.Set("obfs-password", value)
+		}
+		if value := asCSV(m["alpn"]); value != "" {
+			q.Set("alpn", value)
+		}
+		if value := asString(m["fingerprint"]); value != "" {
+			q.Set("pinSHA256", value)
+		}
+		if value := asString(m["ech"]); value != "" {
+			q.Set("ech", value)
+		}
+		if asBool(m["skip-cert-verify"]) {
+			q.Set("insecure", "1")
+		}
+		portSpec := firstStr(m, "ports")
+		if portSpec == "" {
+			portSpec = strconv.Itoa(port)
+		}
+		return fmt.Sprintf("hysteria2://%s@%s?%s#%s", url.QueryEscape(password),
+			uriHostPort(server, portSpec), q.Encode(), frag)
+	case "tuic":
+		uuid, password := asString(m["uuid"]), asString(m["password"])
+		if uuid == "" || password == "" {
+			return ""
+		}
+		q := url.Values{}
+		if value := firstStr(m, "sni", "servername"); value != "" {
+			q.Set("sni", value)
+		}
+		if value := asCSV(m["alpn"]); value != "" {
+			q.Set("alpn", value)
+		}
+		if value := firstStr(m, "congestion-controller", "congestion_control"); value != "" {
+			q.Set("congestion_control", value)
+		}
+		if value := firstStr(m, "udp-relay-mode", "udp_relay_mode"); value != "" {
+			q.Set("udp_relay_mode", value)
+		}
+		if asBool(m["skip-cert-verify"]) {
+			q.Set("allowInsecure", "1")
+		}
+		return fmt.Sprintf("tuic://%s:%s@%s?%s#%s",
+			url.QueryEscape(uuid), url.QueryEscape(password),
+			uriHostPort(server, strconv.Itoa(port)), q.Encode(), frag)
 	default:
 		return ""
 	}
+}
+
+func applyClashURIOptions(q url.Values, m map[string]any) {
+	if fp := asString(m["client-fingerprint"]); fp != "" {
+		q.Set("fp", fp)
+	}
+	if alpn := asCSV(m["alpn"]); alpn != "" {
+		q.Set("alpn", alpn)
+	}
+	network := firstStr(m, "network", "net")
+	if network != "" {
+		q.Set("type", network)
+	}
+	switch strings.ToLower(network) {
+	case "grpc":
+		if opts := asMap(m["grpc-opts"]); opts != nil {
+			q.Set("serviceName", firstStr(opts, "grpc-service-name", "serviceName"))
+			if mode := firstStr(opts, "grpc-mode", "mode"); mode != "" {
+				q.Set("mode", mode)
+			}
+		}
+	case "ws", "websocket":
+		if opts := asMap(m["ws-opts"]); opts != nil {
+			if value := asString(opts["max-early-data"]); value != "" {
+				q.Set("ed", value)
+			}
+			if value := asString(opts["early-data-header-name"]); value != "" {
+				q.Set("eh", value)
+			}
+		}
+	case "xhttp", "splithttp":
+		if opts := asMap(m["xhttp-opts"]); opts != nil {
+			if mode := asString(opts["mode"]); mode != "" {
+				q.Set("mode", mode)
+			}
+		}
+	}
+}
+
+func rawB64(value string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(value))
+}
+
+func uriHostPort(server, port string) string {
+	return net.JoinHostPort(strings.Trim(server, "[]"), port)
 }
 
 func clashMapToNode(m map[string]any, source string) *model.Node {
@@ -197,6 +361,7 @@ func clashMapToNode(m map[string]any, source string) *model.Node {
 	if server == "" || port <= 0 {
 		return nil
 	}
+	extra := map[string]string{}
 	n := &model.Node{
 		Name:     asString(m["name"]),
 		Server:   server,
@@ -208,10 +373,64 @@ func clashMapToNode(m map[string]any, source string) *model.Node {
 		Password: firstStr(m, "password", "auth"),
 		Method:   firstStr(m, "cipher", "security"),
 		Network:  firstStr(m, "network", "net"),
+		Flow:     asString(m["flow"]),
+		ALPN:     asCSV(m["alpn"]),
+		Extra:    extra,
 	}
+	if n.Network == "" {
+		n.Network = "tcp"
+	}
+	if asBool(m["skip-cert-verify"]) {
+		extra["skip-cert-verify"] = "true"
+	}
+	if fp := asString(m["client-fingerprint"]); fp != "" {
+		extra["fp"] = fp
+	}
+	if value := asString(m["fingerprint"]); value != "" {
+		extra["fingerprint"] = value
+	}
+	if value := asString(m["name-cert-verify"]); value != "" {
+		extra["name-cert-verify"] = value
+	}
+	if value := asString(m["packet-encoding"]); value != "" {
+		extra["packet-encoding"] = value
+	}
+	if reality := asMap(m["reality-opts"]); reality != nil {
+		n.Security = "reality"
+		n.TLS = true
+		extra["pbk"] = firstStr(reality, "public-key", "public_key")
+		extra["sid"] = firstStr(reality, "short-id", "short_id")
+		if raw, err := json.Marshal(reality); err == nil {
+			extra["reality-opts"] = string(raw)
+		}
+	} else if n.TLS {
+		n.Security = "tls"
+	}
+	for _, key := range []string{"ech-opts", "shadow-tls-opts", "restls-opts", "jls-opts", "tlsmirror-opts"} {
+		if opts := asMap(m[key]); opts != nil {
+			if raw, err := json.Marshal(opts); err == nil {
+				extra[key] = string(raw)
+			}
+		}
+	}
+	applyClashTransport(n, m)
 	switch typ {
 	case "ss", "shadowsocks":
 		n.Protocol = model.ProtoSS
+		if plugin := asString(m["plugin"]); plugin != "" {
+			extra["plugin"] = plugin
+			if opts := asMap(m["plugin-opts"]); opts != nil {
+				if raw, err := json.Marshal(opts); err == nil {
+					extra["plugin-opts"] = string(raw)
+				}
+			}
+		}
+	case "ssr":
+		n.Protocol = model.ProtoSSR
+		extra["protocol"] = asString(m["protocol"])
+		extra["obfs"] = asString(m["obfs"])
+		extra["protocol-param"] = asString(m["protocol-param"])
+		extra["obfs-param"] = asString(m["obfs-param"])
 	case "trojan":
 		n.Protocol = model.ProtoTrojan
 		n.TLS = true
@@ -219,31 +438,137 @@ func clashMapToNode(m map[string]any, source string) *model.Node {
 		n.Protocol = model.ProtoVMess
 	case "vless":
 		n.Protocol = model.ProtoVLESS
+		extra["encryption"] = asString(m["encryption"])
 	case "hysteria2", "hy2":
 		n.Protocol = model.ProtoHysteria2
 		n.TLS = true
+		extra["obfs"] = asString(m["obfs"])
+		extra["obfs-password"] = asString(m["obfs-password"])
+		for _, key := range []string{
+			"ports", "hop-interval", "up", "down", "bbr-profile",
+			"obfs-min-packet-size", "obfs-max-packet-size",
+		} {
+			extra[key] = asString(m[key])
+		}
+		if opts := asMap(m["realm-opts"]); opts != nil {
+			if raw, err := json.Marshal(opts); err == nil {
+				extra["realm-opts"] = string(raw)
+			}
+		}
+	case "tuic":
+		n.Protocol = model.ProtoTUIC
+		n.TLS = true
+		extra["token"] = asString(m["token"])
+		extra["congestion_control"] = firstStr(m, "congestion-controller", "congestion_control")
+		extra["udp_relay_mode"] = firstStr(m, "udp-relay-mode", "udp_relay_mode")
+		for _, key := range []string{
+			"ip", "heartbeat-interval", "disable-sni", "reduce-rtt", "request-timeout",
+			"max-udp-relay-packet-size", "fast-open", "max-open-streams", "bbr-profile",
+		} {
+			extra[key] = asString(m[key])
+		}
 	default:
 		return nil
 	}
 	if n.Name == "" {
 		n.Name = n.Address()
 	}
+	n.RawURI = clashProxyToURI(m)
 	n.Fingerprint = n.Key()
 	return n
+}
+
+func applyClashTransport(n *model.Node, m map[string]any) {
+	network := strings.ToLower(n.Network)
+	optionsKey := map[string]string{
+		"ws": "ws-opts", "websocket": "ws-opts", "grpc": "grpc-opts",
+		"http": "http-opts", "h2": "h2-opts", "httpupgrade": "http-upgrade-opts",
+		"xhttp": "xhttp-opts", "splithttp": "xhttp-opts",
+	}[network]
+	if opts := asMap(m[optionsKey]); opts != nil {
+		if raw, err := json.Marshal(opts); err == nil {
+			n.Extra["clash-transport-opts"] = string(raw)
+		}
+	}
+	switch network {
+	case "ws", "websocket":
+		if opts := asMap(m["ws-opts"]); opts != nil {
+			n.Path = asString(opts["path"])
+			if headers := asMap(opts["headers"]); headers != nil {
+				n.Host = firstListValue(firstAny(headers, "Host", "host"))
+			}
+			if value := asString(opts["max-early-data"]); value != "" {
+				n.Extra["max-early-data"] = value
+			}
+			if value := asString(opts["early-data-header-name"]); value != "" {
+				n.Extra["early-data-header-name"] = value
+			}
+		}
+	case "grpc":
+		if opts := asMap(m["grpc-opts"]); opts != nil {
+			n.Extra["serviceName"] = firstStr(opts, "grpc-service-name", "serviceName")
+			n.Extra["mode"] = firstStr(opts, "grpc-mode", "mode")
+		}
+	case "http":
+		if opts := asMap(m["http-opts"]); opts != nil {
+			n.Path = firstListValue(opts["path"])
+			if headers := asMap(opts["headers"]); headers != nil {
+				n.Host = firstListValue(firstAny(headers, "Host", "host"))
+			}
+		}
+	case "h2":
+		if opts := asMap(m["h2-opts"]); opts != nil {
+			n.Path = firstListValue(opts["path"])
+			n.Host = firstListValue(opts["host"])
+		}
+	case "httpupgrade":
+		if opts := asMap(m["http-upgrade-opts"]); opts != nil {
+			n.Path = asString(opts["path"])
+			n.Host = asString(opts["host"])
+		}
+	case "xhttp", "splithttp":
+		n.Network = "xhttp"
+		if opts := asMap(m["xhttp-opts"]); opts != nil {
+			n.Path = asString(opts["path"])
+			n.Extra["mode"] = asString(opts["mode"])
+			if headers := asMap(opts["headers"]); headers != nil {
+				n.Host = firstListValue(firstAny(headers, "Host", "host"))
+			}
+		}
+	}
+	if n.Path == "" {
+		n.Path = clashPath(m)
+	}
+	if n.Host == "" {
+		n.Host = clashHost(m)
+	}
 }
 
 func clashHost(m map[string]any) string {
 	if h := asString(m["host"]); h != "" {
 		return h
 	}
-	if opts, ok := m["ws-opts"].(map[string]any); ok {
+	for _, key := range []string{"ws-opts", "xhttp-opts"} {
+		opts := asMap(m[key])
+		if opts == nil {
+			continue
+		}
 		if headers, ok := opts["headers"].(map[string]any); ok {
-			if h := asString(headers["Host"]); h != "" {
+			if h := firstListValue(firstAny(headers, "Host", "host")); h != "" {
 				return h
 			}
-			if h := asString(headers["host"]); h != "" {
+		}
+	}
+	for _, key := range []string{"http-upgrade-opts", "h2-opts"} {
+		if opts := asMap(m[key]); opts != nil {
+			if h := firstListValue(opts["host"]); h != "" {
 				return h
 			}
+		}
+	}
+	if opts := asMap(m["http-opts"]); opts != nil {
+		if headers := asMap(opts["headers"]); headers != nil {
+			return firstListValue(firstAny(headers, "Host", "host"))
 		}
 	}
 	return ""
@@ -253,16 +578,17 @@ func clashPath(m map[string]any) string {
 	if p := asString(m["path"]); p != "" {
 		return p
 	}
-	if opts, ok := m["ws-opts"].(map[string]any); ok {
-		return asString(opts["path"])
+	for _, key := range []string{"ws-opts", "xhttp-opts", "http-upgrade-opts"} {
+		if opts := asMap(m[key]); opts != nil {
+			if path := asString(opts["path"]); path != "" {
+				return path
+			}
+		}
 	}
-	if opts, ok := m["h2-opts"].(map[string]any); ok {
-		switch v := opts["path"].(type) {
-		case string:
-			return v
-		case []any:
-			if len(v) > 0 {
-				return asString(v[0])
+	for _, key := range []string{"h2-opts", "http-opts"} {
+		if opts := asMap(m[key]); opts != nil {
+			if path := firstListValue(opts["path"]); path != "" {
+				return path
 			}
 		}
 	}
@@ -316,6 +642,53 @@ func asBool(v any) bool {
 	default:
 		return false
 	}
+}
+
+func asMap(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
+}
+
+func asCSV(v any) string {
+	switch values := v.(type) {
+	case []any:
+		out := make([]string, 0, len(values))
+		for _, value := range values {
+			if item := asString(value); item != "" {
+				out = append(out, item)
+			}
+		}
+		return strings.Join(out, ",")
+	case []string:
+		return strings.Join(values, ",")
+	default:
+		return asString(v)
+	}
+}
+
+func firstListValue(v any) string {
+	switch values := v.(type) {
+	case []any:
+		if len(values) > 0 {
+			return asString(values[0])
+		}
+	case []string:
+		if len(values) > 0 {
+			return values[0]
+		}
+	default:
+		return asString(v)
+	}
+	return ""
+}
+
+func firstAny(m map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value, ok := m[key]; ok {
+			return value
+		}
+	}
+	return nil
 }
 
 func firstStr(m map[string]any, keys ...string) string {

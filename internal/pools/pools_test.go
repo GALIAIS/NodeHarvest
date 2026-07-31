@@ -11,15 +11,17 @@ import (
 
 func TestConfiguredPoolEnforcesAllDimensions(t *testing.T) {
 	cfg := config.Default()
+	cfg.Dial.Engine = "mihomo"
 	cfg.Pools = []config.PoolConfig{{
 		Key: "streaming", Name: "Streaming", MinScore: 70, MaxLatencyMS: 300,
 		Countries: []string{"US"}, Protocols: []string{"vless"}, RequireVerified: true, MaxNodes: 10,
 	}}
 	st := store.NewMemory()
+	now := time.Now()
 	nodes := []*model.Node{
-		{Protocol: model.ProtoVLESS, Server: "ok", Port: 443, UUID: "1", Alive: true, Verified: true, Score: 90, Country: "US", Latency: 100 * time.Millisecond},
-		{Protocol: model.ProtoVLESS, Server: "slow", Port: 443, UUID: "2", Alive: true, Verified: true, Score: 90, Country: "US", Latency: time.Second},
-		{Protocol: model.ProtoVMess, Server: "wrong", Port: 443, UUID: "3", Alive: true, Verified: true, Score: 90, Country: "US", Latency: 100 * time.Millisecond},
+		{Protocol: model.ProtoVLESS, Server: "ok", Port: 443, UUID: "1", Alive: true, Verified: true, Score: 90, Country: "US", Latency: 100 * time.Millisecond, Dial: &model.DialResult{OK: true, Engine: "mihomo", TestedAt: now}},
+		{Protocol: model.ProtoVLESS, Server: "slow", Port: 443, UUID: "2", Alive: true, Verified: true, Score: 90, Country: "US", Latency: time.Second, Dial: &model.DialResult{OK: true, Engine: "mihomo", TestedAt: now}},
+		{Protocol: model.ProtoVMess, Server: "wrong", Port: 443, UUID: "3", Alive: true, Verified: true, Score: 90, Country: "US", Latency: 100 * time.Millisecond, Dial: &model.DialResult{OK: true, Engine: "mihomo", TestedAt: now}},
 	}
 	if err := st.ReplaceNodes(nodes); err != nil {
 		t.Fatal(err)

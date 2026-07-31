@@ -19,6 +19,7 @@ services:
       # 对外域名，用于 /sub 返回的完整链接
       NODE_HARVEST_PUBLIC_URL: "${NODE_HARVEST_PUBLIC_URL:-http://127.0.0.1:8080}"
       NODE_HARVEST_SINGBOX: "/app/bin/sing-box"
+      NODE_HARVEST_MIHOMO: "/app/bin/mihomo"
       # 可选：AI 真实代理探测
       # NODE_HARVEST_SOCKS5: "127.0.0.1:1080"
       TZ: Asia/Shanghai

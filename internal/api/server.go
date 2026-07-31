@@ -700,6 +700,10 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		HighQuality:  q.Get("hq") == "1" || q.Get("hq") == "true",
 		VerifiedOnly: q.Get("verified") == "1" || q.Get("verified") == "true",
 	}
+	if f.VerifiedOnly {
+		f.DialTestedAfter = s.svc.VerifiedAfter()
+		f.DialEngine = s.svc.VerifiedEngine()
+	}
 	nodes := s.svc.Store().ListNodes(f)
 	start := 0
 	if cursor := q.Get("cursor"); cursor != "" {
@@ -883,7 +887,10 @@ func (s *Server) handleStartPurity(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePuritySummary(w http.ResponseWriter, r *http.Request) {
-	nodes := s.svc.Store().ListNodes(store.NodeFilter{VerifiedOnly: true, Limit: 5000})
+	nodes := s.svc.Store().ListNodes(store.NodeFilter{
+		VerifiedOnly: true, DialTestedAfter: s.svc.VerifiedAfter(),
+		DialEngine: s.svc.VerifiedEngine(), Limit: 5000,
+	})
 	type row struct {
 		ID            string `json:"id"`
 		Name          string `json:"name"`
@@ -952,29 +959,51 @@ func (s *Server) handlePuritySummary(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDialStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := s.svc.Config()
 	status := map[string]any{
-		"enabled":           cfg.Dial.Enabled,
-		"engine":            cfg.Dial.Engine,
-		"bin":               cfg.Dial.Bin,
-		"concurrency":       cfg.Dial.Concurrency,
-		"timeout_sec":       cfg.Dial.TimeoutSec,
-		"test_url":          cfg.Dial.TestURL,
-		"download_bytes":    cfg.Dial.DownloadBytes,
-		"sample_percent":    cfg.Dial.SamplePercent,
-		"max_nodes":         cfg.Dial.MaxNodes, // 0=全部 HQ
-		"batch_size":        cfg.Dial.BatchSize,
-		"after_quality":     cfg.Dial.AfterQuality,
-		"after_quality_max": cfg.Dial.AfterQualityMax,
-		"all_hq":            cfg.Dial.MaxNodes <= 0,
+		"enabled":            cfg.Dial.Enabled,
+		"engine":             cfg.Dial.Engine,
+		"bin":                cfg.Dial.Bin,
+		"mihomo_bin":         cfg.Dial.MihomoBin,
+		"concurrency":        cfg.Dial.Concurrency,
+		"timeout_sec":        cfg.Dial.TimeoutSec,
+		"test_url":           cfg.Dial.TestURL,
+		"download_bytes":     cfg.Dial.DownloadBytes,
+		"sample_percent":     cfg.Dial.SamplePercent,
+		"max_nodes":          cfg.Dial.MaxNodes, // 0=全部 HQ
+		"batch_size":         cfg.Dial.BatchSize,
+		"after_quality":      cfg.Dial.AfterQuality,
+		"after_quality_max":  cfg.Dial.AfterQualityMax,
+		"verified_ttl_hours": cfg.Dial.VerifiedTTLHours,
+		"all_hq":             cfg.Dial.MaxNodes <= 0,
 	}
-	vn := s.svc.Store().ListNodes(store.NodeFilter{VerifiedOnly: true, Limit: 5000})
+	vn := s.svc.Store().ListNodes(store.NodeFilter{
+		VerifiedOnly: true, DialTestedAfter: s.svc.VerifiedAfter(),
+		DialEngine: s.svc.VerifiedEngine(), Limit: 5000,
+	})
 	status["verified_count"] = len(vn)
-	if bin, eng, err := dialer.Available(); err == nil {
+	requested := []struct{ bin, engine string }{{cfg.Dial.Bin, cfg.Dial.Engine}}
+	if cfg.Dial.Engine == "both" {
+		requested = []struct{ bin, engine string }{
+			{cfg.Dial.Bin, "sing-box"}, {cfg.Dial.MihomoBin, "mihomo"},
+		}
+	} else if cfg.Dial.Engine == "mihomo" && cfg.Dial.MihomoBin != "" {
+		requested[0].bin = cfg.Dial.MihomoBin
+	}
+	resolved := map[string]string{}
+	var resolveErr error
+	for _, item := range requested {
+		bin, eng, err := dialer.AvailableFor(item.bin, item.engine)
+		if err != nil {
+			resolveErr = err
+			break
+		}
+		resolved[eng] = bin
+	}
+	if resolveErr == nil {
 		status["available"] = true
-		status["bin_resolved"] = bin
-		status["engine_resolved"] = eng
+		status["resolved"] = resolved
 	} else {
 		status["available"] = false
-		status["error"] = err.Error()
+		status["error"] = resolveErr.Error()
 		status["hint"] = dialer.InstallHint()
 	}
 	writeJSON(w, status)
@@ -1300,12 +1329,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"alert_webhook_set":      cfg.Governance.AlertWebhookURL != "",
 		},
 		"dial": map[string]any{
-			"enabled":           cfg.Dial.Enabled,
-			"engine":            cfg.Dial.Engine,
-			"after_quality":     cfg.Dial.AfterQuality,
-			"after_quality_max": cfg.Dial.AfterQualityMax,
-			"sample_percent":    cfg.Dial.SamplePercent,
-			"download_bytes":    cfg.Dial.DownloadBytes,
+			"enabled":            cfg.Dial.Enabled,
+			"engine":             cfg.Dial.Engine,
+			"after_quality":      cfg.Dial.AfterQuality,
+			"after_quality_max":  cfg.Dial.AfterQualityMax,
+			"sample_percent":     cfg.Dial.SamplePercent,
+			"download_bytes":     cfg.Dial.DownloadBytes,
+			"verified_ttl_hours": cfg.Dial.VerifiedTTLHours,
 		},
 		"observability": map[string]any{
 			"otel_enabled": cfg.Observability.OTLPEndpoint != "",

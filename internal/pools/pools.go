@@ -2,6 +2,7 @@ package pools
 
 import (
 	"strings"
+	"time"
 
 	"github.com/GALIAIS/NodeHarvest/internal/config"
 	"github.com/GALIAIS/NodeHarvest/internal/model"
@@ -9,17 +10,19 @@ import (
 )
 
 type Named struct {
-	Key             string
-	Title           string
-	Description     string
-	MinScore        float64
-	MaxLatencyMS    int64
-	Countries       map[string]bool
-	Protocols       map[string]bool
-	RequireAI       bool
-	RequireVerified bool
-	RefreshSec      int
-	MaxNodes        int
+	Key              string
+	Title            string
+	Description      string
+	MinScore         float64
+	MaxLatencyMS     int64
+	Countries        map[string]bool
+	Protocols        map[string]bool
+	RequireAI        bool
+	RequireVerified  bool
+	VerifiedTTLHours int
+	DialEngine       string
+	RefreshSec       int
+	MaxNodes         int
 }
 
 func Configured(cfg *config.Config) []Named {
@@ -51,7 +54,8 @@ func Configured(cfg *config.Config) []Named {
 			Description: description(source), MinScore: minScore,
 			MaxLatencyMS: int64(source.MaxLatencyMS), Countries: normalizedSet(source.Countries),
 			Protocols: normalizedSet(source.Protocols), RequireAI: source.RequireAI,
-			RequireVerified: source.RequireVerified, RefreshSec: refresh, MaxNodes: limit,
+			RequireVerified: source.RequireVerified, VerifiedTTLHours: cfg.Dial.VerifiedTTLHours,
+			DialEngine: cfg.Dial.Engine, RefreshSec: refresh, MaxNodes: limit,
 		})
 	}
 	return out
@@ -61,14 +65,19 @@ func Select(st *store.Store, pool Named) []*model.Node {
 	if st == nil {
 		return nil
 	}
-	candidates := st.ListNodes(store.NodeFilter{
+	nodeFilter := store.NodeFilter{
 		AliveOnly: true, MinScore: pool.MinScore, Limit: max(pool.MaxNodes*20, 5000),
-	})
+		VerifiedOnly: pool.RequireVerified,
+	}
+	if pool.RequireVerified && pool.VerifiedTTLHours > 0 {
+		nodeFilter.DialTestedAfter = time.Now().Add(-time.Duration(pool.VerifiedTTLHours) * time.Hour)
+		if pool.DialEngine != "auto" {
+			nodeFilter.DialEngine = pool.DialEngine
+		}
+	}
+	candidates := st.ListNodes(nodeFilter)
 	out := make([]*model.Node, 0, min(len(candidates), pool.MaxNodes))
 	for _, node := range candidates {
-		if pool.RequireVerified && !node.Verified {
-			continue
-		}
 		if pool.RequireAI && !hasAIOK(node) {
 			continue
 		}

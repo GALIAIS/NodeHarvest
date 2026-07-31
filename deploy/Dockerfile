@@ -49,12 +49,30 @@ RUN GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build -trimpath \
       -ldflags "-X github.com/sagernet/sing-box/constant.Version=1.13.12 -X internal/godebug.defaultGODEBUG=multipathtcp=0 -checklinkname=0 -s -w -buildid=" \
       -o /out/sing-box ./cmd/sing-box
 
+FROM alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40 AS mihomo
+ARG TARGETARCH
+ARG MIHOMO_VERSION=v1.19.29
+RUN apk add --no-cache ca-certificates curl \
+ && case "${TARGETARCH}" in \
+      amd64) MIHOMO_SHA256=60de76a35a6cbf7b4fa4a20f5c257c24345d1d635ab1aa3877022a1997ef413c ;; \
+      arm64) MIHOMO_SHA256=9a868b5e4e0ad91d9d71e1b41b0cfce78aaba44360c30df74a723f8e3926a86c ;; \
+      *) echo "unsupported Mihomo architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL --retry 3 \
+      "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/mihomo-linux-${TARGETARCH}-${MIHOMO_VERSION}.gz" \
+      -o /tmp/mihomo.gz \
+ && echo "${MIHOMO_SHA256}  /tmp/mihomo.gz" | sha256sum -c - \
+ && gzip -d /tmp/mihomo.gz \
+ && mv /tmp/mihomo /mihomo \
+ && chmod 0755 /mihomo
+
 FROM alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
 RUN apk add --no-cache ca-certificates tzdata curl \
  && adduser -D -H -u 1000 nodeharvest
 WORKDIR /app
 COPY --from=backend /out/nodeharvest-server /out/nodeharvest-worker /out/nodeharvest-migrate /out/nodeharvest /app/bin/
 COPY --from=singbox /out/sing-box /app/bin/sing-box
+COPY --from=mihomo /mihomo /app/bin/mihomo
 COPY --from=frontend /web/out /app/web/dist
 COPY configs /app/configs
 RUN mkdir -p /app/data /app/output /app/logs \

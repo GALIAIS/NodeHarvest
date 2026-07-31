@@ -141,9 +141,13 @@ func NewWithOptions(cfg *config.Config, st *store.Store, opt Options) *Service {
 		s.metrics = metrics.New()
 	}
 	s.pub = publish.NewCache(cfg.Export.Dir)
+	policy := s.publishPolicy()
+	if blob := s.pub.Get(); blob != nil && !blob.MatchesPolicy(policy) {
+		s.pub.Clear()
+	}
 	if s.hot != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		if blob, err := s.hot.GetBlob(ctx); err == nil {
+		if blob, err := s.hot.GetBlob(ctx); err == nil && blob.MatchesPolicy(policy) {
 			if err := s.pub.Store(blob, false); err != nil {
 				slog.Warn("load redis publish cache", "err", err)
 			}
@@ -474,12 +478,13 @@ func (s *Service) RefreshPublishCache() *publish.Blob {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	policy := s.publishPolicy()
 	var lock *hotcache.Lock
 	if s.hot != nil {
 		if acquired, ok, err := s.hot.Acquire(ctx, "publish"); err != nil {
 			slog.Warn("redis publish lock", "err", err)
 		} else if !ok {
-			if blob, getErr := s.hot.GetBlob(ctx); getErr == nil {
+			if blob, getErr := s.hot.GetBlob(ctx); getErr == nil && blob.MatchesPolicy(policy) {
 				_ = s.pub.Store(blob, false)
 				return blob
 			}
@@ -497,7 +502,7 @@ func (s *Service) RefreshPublishCache() *publish.Blob {
 	if cfg.Publish.MaxCountries > 0 {
 		maxC = cfg.Publish.MaxCountries
 	}
-	blob := s.pub.Update(nodes, maxC)
+	blob := s.pub.Update(nodes, maxC, policy)
 	if s.hot != nil {
 		if err := s.hot.SetSnapshot(ctx, blob, nodes); err != nil {
 			slog.Warn("persist redis publish cache", "err", err)
@@ -514,6 +519,40 @@ func (s *Service) RefreshPublishCache() *publish.Blob {
 		s.metrics.SetNodeDimensions(s.store.AllNodes())
 	}
 	return blob
+}
+
+func (s *Service) publishPolicy() string {
+	cfg := s.Config()
+	if cfg == nil {
+		return ""
+	}
+	policy := struct {
+		Version        int
+		PublishEnabled bool
+		MinScore       float64
+		MaxNodes       int
+		MaxNodeAge     int
+		AliveOnly      bool
+		MaxCountries   int
+		Filter         config.FilterConfig
+		DialEnabled    bool
+		DialEngine     string
+		VerifiedTTL    int
+		RenameWithFlag bool
+	}{
+		Version: 2, PublishEnabled: cfg.Publish.Enabled,
+		MinScore: cfg.Publish.MinScore, MaxNodes: cfg.Publish.MaxNodes,
+		MaxNodeAge: cfg.Publish.MaxNodeAgeHours, AliveOnly: cfg.Publish.AliveOnly,
+		MaxCountries: cfg.Publish.MaxCountries, Filter: cfg.Filter,
+		DialEnabled: cfg.Dial.Enabled, DialEngine: cfg.Dial.Engine,
+		VerifiedTTL: cfg.Dial.VerifiedTTLHours, RenameWithFlag: cfg.Geo.RenameWithFlag,
+	}
+	raw, err := json.Marshal(policy)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return fmt.Sprintf("v2:%x", sum[:8])
 }
 
 func (s *Service) newJob(id, typ string, opts map[string]any) *model.Job {
@@ -1196,7 +1235,12 @@ func (s *Service) doDial(ctx context.Context, j *model.Job, p0, p1 float64) erro
 
 	list := s.pickDialCandidates(maxDial, onlyUnverified, allHQ)
 	if len(list) == 0 {
-		return fmt.Errorf("no dialable nodes (need ss/vmess/vless/trojan/hy2)")
+		if onlyUnverified && len(s.pickDialCandidates(maxDial, false, allHQ)) > 0 {
+			j.Stats["dial_planned"] = 0
+			s.updateJob(j, model.JobRunning, p1, "all dialable nodes already have a recent result")
+			return nil
+		}
+		return fmt.Errorf("no dialable nodes for engine %s", cfg.Dial.Engine)
 	}
 	if allHQ {
 		j.Stats["dial_pool_mode"] = "all_hq_batched"
@@ -1206,31 +1250,34 @@ func (s *Service) doDial(ctx context.Context, j *model.Job, p0, p1 float64) erro
 	j.Stats["dial_batch_size"] = batchSize
 	j.Stats["dial_planned"] = len(list)
 
-	// 解析一次引擎信息（每轮可重建 dialer 以绑定进度）
-	probe, err := dialer.New(dialer.Options{
-		Bin:           cfg.Dial.Bin,
-		Engine:        cfg.Dial.Engine,
-		Concurrency:   cfg.Dial.Concurrency,
-		Timeout:       time.Duration(cfg.Dial.TimeoutSec) * time.Second,
-		TestURL:       cfg.Dial.TestURL,
-		DownloadBytes: cfg.Dial.DownloadBytes,
-		WorkDir:       "data/dial-tmp",
-	})
-	if err != nil {
-		return fmt.Errorf("%w; %s", err, dialer.InstallHint())
+	engines := configuredDialEngines(cfg)
+	resolvedBins := make(map[string]string, len(engines))
+	for i := range engines {
+		bin, engine, err := dialer.AvailableFor(engines[i].bin, engines[i].engine)
+		if err != nil {
+			return fmt.Errorf("%w; %s", err, dialer.InstallHint())
+		}
+		engines[i].bin = bin
+		engines[i].engine = engine
+		resolvedBins[engine] = bin
 	}
-	j.Stats["dial_engine"] = probe.Engine()
-	j.Stats["dial_bin"] = probe.Bin()
+	j.Stats["dial_engine"] = cfg.Dial.Engine
+	j.Stats["dial_bins"] = resolvedBins
 	j.Stats["dial_target"] = cfg.Dial.TestURL
 
 	total := len(list)
 	rounds := (total + batchSize - 1) / batchSize
 	j.Stats["dial_rounds"] = rounds
-	s.updateJob(j, model.JobRunning, p0+0.5, fmt.Sprintf("dial %d HQ nodes in %d rounds x%d via %s", total, rounds, batchSize, probe.Engine()))
+	s.updateJob(j, model.JobRunning, p0+0.5,
+		fmt.Sprintf("dial %d HQ nodes in %d rounds x%d via %s", total, rounds, batchSize, cfg.Dial.Engine))
 
 	okN, failN := 0, 0
 	var latSum int64
 	doneTotal := 0
+	engineStats := make(map[string]map[string]int, len(engines))
+	for _, engine := range engines {
+		engineStats[engine.engine] = map[string]int{"ok": 0, "fail": 0}
+	}
 
 	for r := 0; r < rounds; r++ {
 		if err := ctx.Err(); err != nil {
@@ -1247,28 +1294,53 @@ func (s *Service) doDial(ctx context.Context, j *model.Job, p0, p1 float64) erro
 		s.updateJob(j, model.JobRunning, p0+(p1-p0)*float64(start)/float64(total),
 			fmt.Sprintf("dial round %d/%d (%d-%d/%d)", round, rounds, start+1, end, total))
 
-		baseDone := doneTotal
-		d, err := dialer.New(dialer.Options{
-			Bin:           cfg.Dial.Bin,
-			Engine:        cfg.Dial.Engine,
-			Concurrency:   cfg.Dial.Concurrency,
-			Timeout:       time.Duration(cfg.Dial.TimeoutSec) * time.Second,
-			TestURL:       cfg.Dial.TestURL,
-			DownloadBytes: cfg.Dial.DownloadBytes,
-			WorkDir:       "data/dial-tmp",
-			OnProgress: func(done, batchTotal int) {
-				cur := baseDone + done
-				prog := p0 + (p1-p0)*float64(cur)/float64(total)
-				if done%10 == 0 || done == batchTotal {
-					s.updateJob(j, model.JobRunning, prog,
-						fmt.Sprintf("dial round %d/%d overall %d/%d", round, rounds, cur, total))
+		checks := make([][]*model.DialResult, len(batch))
+		for engineIndex, engine := range engines {
+			engine := engine
+			d, err := dialer.New(dialer.Options{
+				Bin:           engine.bin,
+				Engine:        engine.engine,
+				Concurrency:   cfg.Dial.Concurrency,
+				Timeout:       time.Duration(cfg.Dial.TimeoutSec) * time.Second,
+				TestURL:       cfg.Dial.TestURL,
+				DownloadBytes: cfg.Dial.DownloadBytes,
+				WorkDir:       filepath.Join("data/dial-tmp", engine.engine),
+				OnProgress: func(done, batchTotal int) {
+					checked := start*len(engines) + engineIndex*len(batch) + done
+					planned := total * len(engines)
+					prog := p0 + (p1-p0)*float64(checked)/float64(planned)
+					if done%10 == 0 || done == batchTotal {
+						s.updateJob(j, model.JobRunning, prog,
+							fmt.Sprintf("%s round %d/%d checks %d/%d", engine.engine, round, rounds, checked, planned))
+					}
+				},
+			})
+			if err != nil {
+				return err
+			}
+			d.TestAll(ctx, batch)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			for i, node := range batch {
+				if node.Dial == nil {
+					continue
 				}
-			},
-		})
-		if err != nil {
-			return err
+				check := *node.Dial
+				check.Checks = nil
+				checks[i] = append(checks[i], &check)
+				if check.OK {
+					engineStats[engine.engine]["ok"]++
+				} else {
+					engineStats[engine.engine]["fail"]++
+				}
+			}
 		}
-		d.TestAll(ctx, batch)
+		for i, node := range batch {
+			node.Dial = combineDialChecks(checks[i])
+			node.Verified = node.Dial != nil && node.Dial.OK
+			node.Tags = setDialTag(node.Tags, node.Verified)
+		}
 		for _, node := range batch {
 			if node.Dial == nil {
 				continue
@@ -1296,7 +1368,9 @@ func (s *Service) doDial(ctx context.Context, j *model.Job, p0, p1 float64) erro
 		j.Stats["dial_ok"] = okN
 		j.Stats["dial_fail"] = failN
 		j.Stats["dial_done"] = doneTotal
-		j.Stats["verified_total"] = len(s.store.ListNodes(store.NodeFilter{VerifiedOnly: true, Limit: 20000}))
+		j.Stats["verified_total"] = len(s.store.ListNodes(store.NodeFilter{
+			VerifiedOnly: true, DialTestedAfter: s.verifiedAfter(), DialEngine: s.verifiedEngine(), Limit: 20000,
+		}))
 		s.updateJob(j, model.JobRunning, p0+(p1-p0)*float64(doneTotal)/float64(total),
 			fmt.Sprintf("dial round %d/%d done ok=%d fail=%d", round, rounds, okN, failN))
 	}
@@ -1308,7 +1382,10 @@ func (s *Service) doDial(ctx context.Context, j *model.Job, p0, p1 float64) erro
 	j.Stats["dial_ok"] = okN
 	j.Stats["dial_fail"] = failN
 	j.Stats["dial_avg_ms"] = avg
-	j.Stats["verified_total"] = len(s.store.ListNodes(store.NodeFilter{VerifiedOnly: true, Limit: 20000}))
+	j.Stats["dial_by_engine"] = engineStats
+	j.Stats["verified_total"] = len(s.store.ListNodes(store.NodeFilter{
+		VerifiedOnly: true, DialTestedAfter: s.verifiedAfter(), DialEngine: s.verifiedEngine(), Limit: 20000,
+	}))
 	s.updateJob(j, model.JobRunning, p1, fmt.Sprintf("dial ok=%d fail=%d rounds=%d planned=%d", okN, failN, rounds, total))
 	return nil
 }
@@ -1347,15 +1424,18 @@ func (s *Service) pickDialCandidates(maxDial int, onlyUnverified bool, allHQ boo
 		score float64
 	}
 	var ranked []scored
+	engine := "auto"
+	retestAfter := time.Time{}
+	if cfg := s.Config(); cfg != nil {
+		engine = cfg.Dial.Engine
+		retestAfter = s.verifiedAfter()
+	}
 	for _, n := range candidates {
-		if !dialer.Supports(n) {
+		if !dialer.SupportsEngine(n, engine) {
 			continue
 		}
-		if onlyUnverified && n.Verified {
-			continue
-		}
-		// 限量模式才跳过 dial-fail；全量 HQ 要把所有未 verified 的都测到
-		if !allHQ && onlyUnverified && hasTag(n.Tags, "dial-fail") {
+		if onlyUnverified && n.Dial != nil && n.Dial.HasEngine(engine) &&
+			!n.Dial.TestedAt.IsZero() && n.Dial.TestedAt.After(retestAfter) {
 			continue
 		}
 		latMs := n.Latency.Milliseconds()
@@ -1395,9 +1475,6 @@ func (s *Service) pickDialCandidates(maxDial int, onlyUnverified bool, allHQ boo
 		out := make([]*model.Node, 0, len(ranked))
 		for _, it := range ranked {
 			out = append(out, it.n)
-		}
-		if len(out) == 0 && onlyUnverified {
-			return s.pickDialCandidates(0, false, true)
 		}
 		return out
 	}
@@ -1452,9 +1529,6 @@ func (s *Service) pickDialCandidates(maxDial int, onlyUnverified bool, allHQ boo
 			out = append(out, it.n)
 		}
 	}
-	if len(out) == 0 && onlyUnverified {
-		return s.pickDialCandidates(maxDial, false, false)
-	}
 	return out
 }
 
@@ -1485,19 +1559,75 @@ func boolScore(value bool) float64 {
 	return 0
 }
 
+type dialEngineSpec struct {
+	engine string
+	bin    string
+}
+
+func configuredDialEngines(cfg *config.Config) []dialEngineSpec {
+	if cfg.Dial.Engine != "both" {
+		bin := cfg.Dial.Bin
+		if cfg.Dial.Engine == "mihomo" && cfg.Dial.MihomoBin != "" {
+			bin = cfg.Dial.MihomoBin
+		}
+		return []dialEngineSpec{{engine: cfg.Dial.Engine, bin: bin}}
+	}
+	return []dialEngineSpec{
+		{engine: "sing-box", bin: cfg.Dial.Bin},
+		{engine: "mihomo", bin: cfg.Dial.MihomoBin},
+	}
+}
+
+func combineDialChecks(checks []*model.DialResult) *model.DialResult {
+	if len(checks) == 0 {
+		return nil
+	}
+	authoritative := checks[len(checks)-1]
+	for _, check := range checks {
+		if check != nil && check.Engine == "mihomo" {
+			authoritative = check
+			break
+		}
+	}
+	if authoritative == nil {
+		return nil
+	}
+	result := *authoritative
+	if len(checks) == 1 {
+		result.Checks = nil
+		return &result
+	}
+	result.Engine = "both"
+	result.Checks = checks
+	for _, check := range checks {
+		if check != nil && check.TestedAt.After(result.TestedAt) {
+			result.TestedAt = check.TestedAt
+		}
+	}
+	return &result
+}
+
+func setDialTag(tags []string, verified bool) []string {
+	add, remove := "verified", "dial-fail"
+	if !verified {
+		add, remove = remove, add
+	}
+	out := tags[:0]
+	for _, tag := range tags {
+		if tag != add && tag != remove {
+			out = append(out, tag)
+		}
+	}
+	return append(out, add)
+}
+
 // doPurity 对 verified 节点做纯净度 / CF 挑战探测
 func (s *Service) doPurity(ctx context.Context, j *model.Job, p0, p1 float64) error {
 	s.updateJob(j, model.JobRunning, p0, "purity probe starting")
-	list := s.store.ListNodes(store.NodeFilter{VerifiedOnly: true, AliveOnly: true, Limit: 5000})
-	if len(list) == 0 {
-		// 兜底：有 dial ok 标记的
-		all := s.store.ListNodes(store.NodeFilter{AliveOnly: true, HighQuality: true, Limit: 500})
-		for _, n := range all {
-			if n.Verified || (n.Dial != nil && n.Dial.OK) {
-				list = append(list, n)
-			}
-		}
-	}
+	list := s.store.ListNodes(store.NodeFilter{
+		VerifiedOnly: true, AliveOnly: true, DialTestedAfter: s.verifiedAfter(),
+		DialEngine: s.verifiedEngine(), Limit: 5000,
+	})
 	if len(list) == 0 {
 		return fmt.Errorf("no verified nodes to probe; run dial first")
 	}
@@ -1730,25 +1860,8 @@ func (s *Service) doExport(j *model.Job) {
 	}
 }
 
-// SelectPublishNodes 筛选可对外发布的高质量节点
-// 若存在真实拨测通过节点，优先发布 verified 池（更可信）
+// SelectPublishNodes 筛选可对外发布的高质量节点。
 func (s *Service) SelectPublishNodes() []*model.Node {
-	cfg := s.Config()
-	verified := s.store.ListNodes(store.NodeFilter{
-		VerifiedOnly: true,
-		AliveOnly:    true,
-		SeenAfter:    s.publishSeenAfter(),
-		Limit:        cfg.Publish.MaxNodes,
-	})
-	if len(verified) >= 10 {
-		// 国旗前缀
-		if cfg.Geo.RenameWithFlag {
-			for _, n := range verified {
-				applyCountryNamePrefix(n)
-			}
-		}
-		return verified
-	}
 	return s.SelectPublishNodesCountry("")
 }
 
@@ -1778,16 +1891,21 @@ func (s *Service) SelectPublishNodesCountry(country string) []*model.Node {
 		Country:   strings.ToUpper(strings.TrimSpace(country)),
 		SeenAfter: s.publishSeenAfter(),
 	}
+	if cfg.Dial.Enabled {
+		f.VerifiedOnly = true
+		f.DialTestedAfter = s.verifiedAfter()
+		f.DialEngine = s.verifiedEngine()
+	}
 	if minScore >= 70 {
 		f.HighQuality = true
 	}
 	hq := s.store.ListNodes(f)
-	if len(hq) == 0 && country == "" {
+	if len(hq) == 0 && country == "" && !cfg.Dial.Enabled {
 		hq = s.store.ListNodes(store.NodeFilter{
 			AliveOnly: true, MinScore: 50, SeenAfter: s.publishSeenAfter(), Limit: limit * 2,
 		})
 	}
-	if len(hq) == 0 && country == "" {
+	if len(hq) == 0 && country == "" && !cfg.Dial.Enabled {
 		hq = s.store.ListNodes(store.NodeFilter{
 			AliveOnly: true, SeenAfter: s.publishSeenAfter(), Limit: limit,
 		})
@@ -1836,13 +1954,19 @@ func (s *Service) PublishFilter() store.NodeFilter {
 	if limit <= 0 {
 		limit = cfg.Filter.MaxNodes
 	}
-	return store.NodeFilter{
+	nodeFilter := store.NodeFilter{
 		AliveOnly:   cfg.Publish.AliveOnly,
 		MinScore:    minScore,
 		Limit:       limit,
 		HighQuality: minScore >= 70,
 		SeenAfter:   s.publishSeenAfter(),
 	}
+	if cfg.Dial.Enabled {
+		nodeFilter.VerifiedOnly = true
+		nodeFilter.DialTestedAfter = s.verifiedAfter()
+		nodeFilter.DialEngine = s.verifiedEngine()
+	}
+	return nodeFilter
 }
 
 func (s *Service) publishSeenAfter() time.Time {
@@ -1852,6 +1976,26 @@ func (s *Service) publishSeenAfter() time.Time {
 	}
 	return time.Now().Add(-time.Duration(hours) * time.Hour)
 }
+
+func (s *Service) verifiedAfter() time.Time {
+	hours := s.Config().Dial.VerifiedTTLHours
+	if hours <= 0 {
+		hours = 6
+	}
+	return time.Now().Add(-time.Duration(hours) * time.Hour)
+}
+
+func (s *Service) VerifiedAfter() time.Time { return s.verifiedAfter() }
+
+func (s *Service) verifiedEngine() string {
+	engine := strings.ToLower(strings.TrimSpace(s.Config().Dial.Engine))
+	if engine == "auto" {
+		return ""
+	}
+	return engine
+}
+
+func (s *Service) VerifiedEngine() string { return s.verifiedEngine() }
 
 func hasAnyAIOK(n *model.Node) bool {
 	for _, r := range n.AIAccess {

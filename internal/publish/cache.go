@@ -28,6 +28,7 @@ type Blob struct {
 	ByCountry     map[string]int
 	ETag          string
 	UpdatedAt     string
+	Policy        string
 	CountryRaw    map[string]string
 	CountryBase64 map[string]string
 	CountryClash  map[string]string
@@ -59,6 +60,12 @@ func (c *Cache) Get() *Blob {
 	return c.ptr.Load()
 }
 
+func (c *Cache) Clear() {
+	if c != nil {
+		c.ptr.Store(nil)
+	}
+}
+
 func (c *Cache) Store(blob *Blob, persist bool) error {
 	if c == nil || blob == nil {
 		return nil
@@ -88,7 +95,7 @@ func (c *Cache) Store(blob *Blob, persist bool) error {
 }
 
 // Update 从高质量节点重建全局与分国家缓存
-func (c *Cache) Update(nodes []*model.Node, maxCountryVariants int) *Blob {
+func (c *Cache) Update(nodes []*model.Node, maxCountryVariants int, policy string) *Blob {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if maxCountryVariants <= 0 {
@@ -120,6 +127,7 @@ func (c *Cache) Update(nodes []*model.Node, maxCountryVariants int) *Blob {
 		ByCountry:     byCountry,
 		ETag:          etagOf(raw + b64 + clash),
 		UpdatedAt:     timex.NowRFC3339(),
+		Policy:        policy,
 		CountryRaw:    map[string]string{},
 		CountryBase64: map[string]string{},
 		CountryClash:  map[string]string{},
@@ -176,8 +184,8 @@ func (c *Cache) persist(b *Blob) error {
 		{name: "sub.base64", body: b.Base64},
 		{name: "clash.yaml", body: b.Clash},
 		{name: "sub.meta.json", body: fmt.Sprintf(
-			`{"count":%d,"etag":%q,"updated_at":%q}`,
-			b.Count, b.ETag, b.UpdatedAt,
+			`{"count":%d,"etag":%q,"updated_at":%q,"policy":%q}`,
+			b.Count, b.ETag, b.UpdatedAt, b.Policy,
 		)},
 	}
 	for _, write := range writes {
@@ -219,12 +227,14 @@ func (c *Cache) loadFromDisk() *Blob {
 		Count     int    `json:"count"`
 		ETag      string `json:"etag"`
 		UpdatedAt string `json:"updated_at"`
+		Policy    string `json:"policy"`
 	}
 	if data, err := os.ReadFile(filepath.Join(c.dir, "sub.meta.json")); err == nil {
 		if json.Unmarshal(data, &meta) == nil {
 			b.Count = meta.Count
 			b.ETag = meta.ETag
 			b.UpdatedAt = meta.UpdatedAt
+			b.Policy = meta.Policy
 		}
 	}
 	if b.Raw != "" {
@@ -289,6 +299,10 @@ func (b *Blob) Fresh(maxAge time.Duration) bool {
 	updated, err := time.Parse(time.RFC3339, b.UpdatedAt)
 	age := time.Since(updated)
 	return err == nil && age >= -5*time.Minute && age <= maxAge
+}
+
+func (b *Blob) MatchesPolicy(policy string) bool {
+	return b != nil && policy != "" && b.Policy == policy
 }
 
 func normalizeCC(c string) string {

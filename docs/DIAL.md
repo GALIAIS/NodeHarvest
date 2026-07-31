@@ -1,27 +1,19 @@
-# 真实协议拨测（sing-box）
+# 真实协议拨测（sing-box / xray / Mihomo）
 
 ## 与 TCP 测速区别
 
 | | quality（现有） | dial（本功能） |
 |--|-----------------|----------------|
-| 探测 | TCP/TLS 到节点端口 | 拉起 sing-box，按节点协议出站 |
+| 探测 | TCP/TLS 到节点端口 | 拉起代理核心，按完整节点配置出站 |
 | 结论 | 端口可达 | **代理链路真实可用** |
 | 速度 | 快 | 慢（每节点数秒） |
 | 标记 | `alive` / `score` | `verified` + `dial` |
 
 ## 依赖
 
-```bash
-# VPS
-bash /opt/nodeharvest/deploy/install-singbox.sh
-# 或手动放到 /opt/nodeharvest/bin/sing-box
-export NODE_HARVEST_SINGBOX=/opt/nodeharvest/bin/sing-box
-systemctl restart nodeharvest
-```
-
-安装脚本默认固定 sing-box 1.13.12 并校验官方归档 SHA-256；指定其他版本时必须
-同时提供 `SINGBOX_SHA256`。生产镜像使用固定上游 commit、当前 Go 安全补丁和
-已修复依赖静态构建，不依赖 glibc。
+生产镜像已内置并固定 sing-box 1.13.12 与 Mihomo 1.19.29，Mihomo 官方归档在
+构建时校验 SHA-256。非容器部署可设置 `NODE_HARVEST_SINGBOX` 和
+`NODE_HARVEST_MIHOMO` 指向自行校验的二进制。
 
 ## 配置 `configs/config.yaml`
 
@@ -29,10 +21,12 @@ systemctl restart nodeharvest
 dial:
   enabled: true
   bin: "/opt/nodeharvest/bin/sing-box"
-  engine: sing-box
+  mihomo_bin: "/opt/nodeharvest/bin/mihomo"
+  engine: both
   concurrency: 4
   timeout_sec: 18
   test_url: "https://www.cloudflare.com/cdn-cgi/trace"
+  verified_ttl_hours: 6
   max_nodes: 0              # 0=全部 HQ；>0 则限制单次数量
   batch_size: 200           # 多轮，每批 200
   after_quality: true       # full/quality 后自动真拨
@@ -60,19 +54,19 @@ curl https://node.galiais.com/api/pools
 
 ## 行为说明
 
-1. 候选：优先 `alive + hq + 支持协议`（ss/vmess/vless/trojan/hy2）
-2. 每个节点：写临时 sing-box 配置 → 本地 socks → HTTP GET `test_url`
-3. 成功：`verified=true`，`tags` 含 `verified`，分数至少抬到 85
-4. 失败：`tags` 含 `dial-fail`，保留 TCP 结果
-5. 当 `verified >= 10` 时，**默认 `/sub` 优先发布 verified 池**
+1. 候选：`alive + hq + Mihomo 支持协议`，包括 SS/SSR/VMess/VLESS/Trojan/Hysteria2/TUIC。
+2. `both` 依次运行 sing-box 和 Mihomo；每次都通过独立临时目录、本地 SOCKS 和 `test_url` 真测。
+3. Mihomo 直接复用订阅导出的同一份代理对象，其结果决定 `verified`；sing-box 结果保存在 `dial.checks` 供对照。
+4. 默认订阅和 verified 池只发布 `verified_ttl_hours` 内由 Mihomo 通过的节点，不再用 TCP 测活结果兜底。
+5. 失败写入 `dial-fail`；后续成功会移除失败标记，反之亦然。
 
 ## 候选选取（2.1.2+）
 
 默认 **all HQ**：存活且 score≥min_score 的节点，有多少测多少，按 `batch_size`（默认 200）多轮执行。
 
 - `max_nodes: 0` / `after_quality_max: 0` → 全部 HQ
-- 非 `force` 时跳过已 `verified`（已知可用）
-- 全量模式不跳过 `dial-fail`（会重测）
+- 非 `force` 时跳过 `verified_ttl_hours` 内已有拨测结果的节点
+- 成功与失败结果过期后都会重测
 - 若显式 `max_dial>0`：限量 + 国家/协议分散（压低 CDN 假活权重）
 
 ## 建议节奏
@@ -83,7 +77,6 @@ curl https://node.galiais.com/api/pools
 
 ## 限制
 
-- 当前引擎实现以 **sing-box** 为主
-- 部分冷门传输（如复杂 xhttp）可能跳过 transport
-- SSR/TUIC 暂不拨测
-- 并发过高会占满 CPU/端口，建议 concurrency ≤ 8
+- Mihomo 是 Clash 订阅的权威结果；sing-box 不支持的 SSR、外部 SS 插件或部分 xhttp 不会否决 Mihomo 成功。
+- 节点是否能从中国大陆访问仍受入口 IP、运营商路由、封锁和地域 ACL 影响；VPS 测试不能替代大陆网络测试。
+- 并发过高会占满 CPU/端口，建议 concurrency ≤ 8。

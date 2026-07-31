@@ -13,7 +13,7 @@ func TestParseVLESS(t *testing.T) {
 	if n.Protocol != "vless" || n.Server != "example.org" || n.Port != 443 {
 		t.Fatalf("unexpected node: %+v", n)
 	}
-	if n.UUID == "" || !n.TLS {
+	if n.UUID == "" || !n.TLS || n.Extra["encryption"] != "none" {
 		t.Fatalf("missing uuid/tls: %+v", n)
 	}
 	if n.SkipTLSVerify() {
@@ -73,5 +73,124 @@ func TestParseVMessJSON(t *testing.T) {
 	}
 	if n.Server != "1.2.3.4" || n.Port != 10086 || n.Name != "demo" {
 		t.Fatalf("unexpected: %+v", n)
+	}
+}
+
+func TestParseClashPreservesTransportRealityAndPlugin(t *testing.T) {
+	content := `proxies:
+  - name: vless-ws
+    type: vless
+    server: edge.example.com
+    port: 443
+    uuid: uuid
+    tls: true
+    servername: origin.example.com
+    client-fingerprint: chrome
+    network: ws
+    ws-opts:
+      path: /socket
+      headers: {Host: cdn.example.com}
+      max-early-data: 2048
+      v2ray-http-upgrade: true
+    reality-opts: {public-key: public-key, short-id: abcd}
+    ech-opts: {enable: true, config: base64-ech-config}
+    shadow-tls-opts: {password: shadow-secret, version: 3}
+  - name: ss-plugin
+    type: ss
+    server: ss.example.com
+    port: 8388
+    cipher: aes-128-gcm
+    password: secret
+    plugin: v2ray-plugin
+    plugin-opts: {mode: websocket, host: cdn.example.com}
+`
+	nodes := ParseClash(content, "test")
+	if len(nodes) != 2 {
+		t.Fatalf("nodes=%d", len(nodes))
+	}
+	vless := nodes[0]
+	if vless.Network != "ws" || vless.Path != "/socket" || vless.Host != "cdn.example.com" ||
+		vless.Security != "reality" || vless.Extra["pbk"] != "public-key" ||
+		vless.Extra["max-early-data"] != "2048" || vless.Extra["clash-transport-opts"] == "" ||
+		vless.Extra["ech-opts"] == "" || vless.Extra["shadow-tls-opts"] == "" {
+		t.Fatalf("vless fields lost: %+v", vless)
+	}
+	if nodes[1].Extra["plugin"] != "v2ray-plugin" || nodes[1].Extra["plugin-opts"] == "" {
+		t.Fatalf("ss plugin lost: %+v", nodes[1])
+	}
+}
+
+func TestSSRClashRoundTripDecodesShortFields(t *testing.T) {
+	uri := clashProxyToURI(map[string]any{
+		"name": "ssr", "type": "ssr", "server": "ssr.example.com", "port": 443,
+		"cipher": "aes-256-cfb", "password": "secret",
+		"protocol": "auth_sha1_v4", "obfs": "tls1.2_ticket_auth",
+	})
+	node, err := ParseURI(uri, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Password != "secret" || node.Extra["protocol"] != "auth_sha1_v4" {
+		t.Fatalf("ssr round trip lost fields: %+v", node)
+	}
+	ipv6URI := clashProxyToURI(map[string]any{
+		"name": "ssr-v6", "type": "ssr", "server": "2001:db8::1", "port": 443,
+		"cipher": "aes-256-cfb", "password": "secret",
+		"protocol": "origin", "obfs": "plain",
+	})
+	ipv6, err := ParseURI(ipv6URI, "test")
+	if err != nil || ipv6.Server != "2001:db8::1" {
+		t.Fatalf("SSR IPv6 round trip failed: uri=%s node=%+v err=%v", ipv6URI, ipv6, err)
+	}
+}
+
+func TestParseHysteria2PortHoppingAndCertificatePin(t *testing.T) {
+	node, err := ParseURI(
+		"hysteria2://user:secret@example.org:443,5000-5002/?sni=example.org&pinSHA256=deadbeef#hy2",
+		"test",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Port != 443 || node.Password != "user:secret" || node.Extra["ports"] != "443,5000-5002" ||
+		node.Extra["fingerprint"] != "deadbeef" {
+		t.Fatalf("hysteria2 fields lost: %+v", node)
+	}
+}
+
+func TestParseClashPreservesQUICProtocolOptions(t *testing.T) {
+	nodes := ParseClash(`proxies:
+  - name: hy2
+    type: hysteria2
+    server: hy2.example.com
+    port: 443
+    ports: 443-8443
+    hop-interval: 30
+    password: secret
+    obfs: gecko
+    obfs-password: obfs-secret
+    obfs-min-packet-size: 512
+    obfs-max-packet-size: 1200
+    fingerprint: deadbeef
+  - name: tuic-v4
+    type: tuic
+    server: tuic.example.com
+    port: 443
+    token: token-secret
+    disable-sni: true
+    reduce-rtt: true
+    request-timeout: 8000
+    max-open-streams: 20
+`, "test")
+	if len(nodes) != 2 {
+		t.Fatalf("nodes=%d", len(nodes))
+	}
+	if nodes[0].Extra["ports"] != "443-8443" || nodes[0].Extra["obfs-min-packet-size"] != "512" ||
+		nodes[0].Extra["fingerprint"] != "deadbeef" {
+		t.Fatalf("hysteria2 options lost: %+v", nodes[0])
+	}
+	if nodes[1].Extra["token"] != "token-secret" || nodes[1].Extra["reduce-rtt"] != "true" ||
+		nodes[1].Extra["max-open-streams"] != "20" {
+		t.Fatalf("TUIC options lost: %+v", nodes[1])
 	}
 }

@@ -186,8 +186,17 @@ func isMostlyPrintable(s string) bool {
 }
 
 func decodeMaybeBase64(s string) string {
-	if d, ok := tryDecodeBase64(s); ok {
-		return d
+	compact := strings.TrimSpace(s)
+	if compact == "" {
+		return ""
+	}
+	if m := len(compact) % 4; m != 0 {
+		compact += strings.Repeat("=", 4-m)
+	}
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.RawURLEncoding} {
+		if body, err := enc.DecodeString(compact); err == nil && isMostlyPrintable(string(body)) {
+			return string(body)
+		}
 	}
 	return s
 }

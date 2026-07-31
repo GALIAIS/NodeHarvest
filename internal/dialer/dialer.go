@@ -20,14 +20,16 @@ import (
 
 	"golang.org/x/net/proxy"
 
+	"github.com/GALIAIS/NodeHarvest/internal/exporter"
 	"github.com/GALIAIS/NodeHarvest/internal/model"
+	"gopkg.in/yaml.v3"
 )
 
 // Options 拨测选项
 type Options struct {
-	// Bin sing-box 或 xray 可执行文件；空则自动查找
+	// Bin sing-box、xray 或 mihomo 可执行文件；空则自动查找
 	Bin string
-	// Engine force: sing-box | xray | auto
+	// Engine force: sing-box | xray | mihomo | auto
 	Engine string
 	// Concurrency 同时拉起的核心实例数（建议 2–8）
 	Concurrency int
@@ -73,7 +75,9 @@ func New(opts Options) (*Dialer, error) {
 	if opts.BasePort <= 0 {
 		opts.BasePort = 19000
 	}
-	_ = os.MkdirAll(opts.WorkDir, 0o700)
+	if err := os.MkdirAll(opts.WorkDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create dial work directory: %w", err)
+	}
 
 	bin, engine, err := resolveBinary(opts.Bin, opts.Engine)
 	if err != nil {
@@ -84,32 +88,62 @@ func New(opts Options) (*Dialer, error) {
 
 func resolveBinary(bin, engine string) (string, string, error) {
 	engine = strings.ToLower(strings.TrimSpace(engine))
+	if engine == "auto" {
+		engine = ""
+	}
+	switch engine {
+	case "", "sing-box", "xray", "mihomo":
+	default:
+		return "", "", fmt.Errorf("unsupported dial engine %q", engine)
+	}
 	if bin != "" {
 		if _, err := os.Stat(bin); err == nil {
 			if engine == "" {
 				base := strings.ToLower(filepath.Base(bin))
-				if strings.Contains(base, "xray") {
+				switch {
+				case strings.Contains(base, "mihomo"), strings.Contains(base, "clash-meta"):
+					engine = "mihomo"
+				case strings.Contains(base, "xray"):
 					engine = "xray"
-				} else {
+				default:
 					engine = "sing-box"
 				}
 			}
 			return bin, engine, nil
 		}
+		return "", "", fmt.Errorf("%s binary not found at %s", firstNonEmpty(engine, "dial"), bin)
 	}
-	// PATH search preference: sing-box then xray
 	candidates := []struct{ path, eng string }{
 		{"sing-box", "sing-box"},
+		{"mihomo", "mihomo"},
+		{"clash-meta", "mihomo"},
 		{"xray", "xray"},
 		{"/usr/local/bin/sing-box", "sing-box"},
 		{"/usr/bin/sing-box", "sing-box"},
+		{"/usr/local/bin/mihomo", "mihomo"},
+		{"/usr/bin/mihomo", "mihomo"},
 		{"/usr/local/bin/xray", "xray"},
 		{"/opt/sing-box/sing-box", "sing-box"},
 		{"/opt/nodeharvest/bin/sing-box", "sing-box"},
+		{"/opt/nodeharvest/bin/mihomo", "mihomo"},
+		{"/app/bin/sing-box", "sing-box"},
+		{"/app/bin/mihomo", "mihomo"},
 	}
-	if engine == "xray" {
+	switch engine {
+	case "xray":
 		candidates = []struct{ path, eng string }{
-			{"xray", "xray"}, {"/usr/local/bin/xray", "xray"}, {"sing-box", "sing-box"},
+			{"xray", "xray"}, {"/usr/local/bin/xray", "xray"}, {"/usr/bin/xray", "xray"},
+			{"/opt/nodeharvest/bin/xray", "xray"}, {"/app/bin/xray", "xray"},
+		}
+	case "mihomo":
+		candidates = []struct{ path, eng string }{
+			{"mihomo", "mihomo"}, {"clash-meta", "mihomo"}, {"/usr/local/bin/mihomo", "mihomo"},
+			{"/usr/bin/mihomo", "mihomo"}, {"/opt/nodeharvest/bin/mihomo", "mihomo"}, {"/app/bin/mihomo", "mihomo"},
+		}
+	case "sing-box":
+		candidates = []struct{ path, eng string }{
+			{"sing-box", "sing-box"}, {"/usr/local/bin/sing-box", "sing-box"}, {"/usr/bin/sing-box", "sing-box"},
+			{"/opt/sing-box/sing-box", "sing-box"}, {"/opt/nodeharvest/bin/sing-box", "sing-box"}, {"/app/bin/sing-box", "sing-box"},
 		}
 	}
 	for _, c := range candidates {
@@ -120,7 +154,7 @@ func resolveBinary(bin, engine string) (string, string, error) {
 			return c.path, c.eng, nil
 		}
 	}
-	return "", "", fmt.Errorf("sing-box/xray binary not found; install sing-box or set dial.bin")
+	return "", "", fmt.Errorf("%s binary not found", firstNonEmpty(engine, "sing-box/mihomo/xray"))
 }
 
 func (d *Dialer) Engine() string { return d.engine }
@@ -160,22 +194,34 @@ func (d *Dialer) TestAll(ctx context.Context, nodes []*model.Node) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				cur := int(done.Add(1))
+				if d.opts.OnProgress != nil {
+					d.opts.OnProgress(cur, total)
+				}
+			}()
 			select {
 			case <-ctx.Done():
-				n.Dial = &model.DialResult{OK: false, Error: "canceled", Engine: d.engine, TestedAt: time.Now()}
+				markCanceled(n, d.engine)
 				return
 			case sem <- struct{}{}:
 			}
 			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				markCanceled(n, d.engine)
+				return
+			}
 
 			d.testOne(ctx, n)
-			cur := int(done.Add(1))
-			if d.opts.OnProgress != nil {
-				d.opts.OnProgress(cur, total)
-			}
 		}()
 	}
 	wg.Wait()
+}
+
+func markCanceled(n *model.Node, engine string) {
+	n.Dial = &model.DialResult{OK: false, Error: "canceled", Engine: engine, TestedAt: time.Now()}
+	n.Verified = false
+	n.Tags = replaceTag(n.Tags, "verified", "dial-fail")
 }
 
 func (d *Dialer) testOne(ctx context.Context, n *model.Node) {
@@ -194,44 +240,64 @@ func (d *Dialer) testOne(ctx context.Context, n *model.Node) {
 				n.Latency = time.Duration(res.LatencyMS) * time.Millisecond
 			}
 			n.Alive = true
-			n.Tags = mergeTag(n.Tags, "verified")
+			n.Tags = replaceTag(n.Tags, "dial-fail", "verified")
 		} else {
-			n.Tags = mergeTag(n.Tags, "dial-fail")
+			n.Tags = replaceTag(n.Tags, "verified", "dial-fail")
 		}
 	}()
 
-	if !Supports(n) {
+	if !SupportsEngine(n, d.engine) {
 		res.Error = "unsupported protocol"
 		return
 	}
 	port := d.allocPort()
-	cfgPath := filepath.Join(d.opts.WorkDir, fmt.Sprintf("sb-%d-%s.json", port, n.ID))
-	logPath := cfgPath + ".log"
-	cfg, args, err := d.coreConfig(n, port, logPath)
+	probeDir, err := os.MkdirTemp(d.opts.WorkDir, fmt.Sprintf("%s-%d-", d.engine, port))
+	if err != nil {
+		res.Error = "create probe directory: " + err.Error()
+		return
+	}
+	defer os.RemoveAll(probeDir)
+	ext := ".json"
+	if d.engine == "mihomo" {
+		ext = ".yaml"
+	}
+	cfgPath := filepath.Join(probeDir, "config"+ext)
+	logPath := filepath.Join(probeDir, "core.log")
+	defer appendCoreError(res, logPath)
+	raw, err := d.coreConfig(n, port, logPath)
 	if err != nil {
 		res.Error = err.Error()
 		return
 	}
-	raw, _ := json.Marshal(cfg)
 	if err := os.WriteFile(cfgPath, raw, 0o600); err != nil {
 		res.Error = "write config: " + err.Error()
 		return
 	}
-	defer func() {
-		_ = os.Remove(cfgPath)
-		_ = os.Remove(logPath)
-	}()
 
 	cctx, cancel := context.WithTimeout(ctx, d.opts.Timeout)
 	defer cancel()
 
-	args = append(args, cfgPath)
+	var args []string
+	switch d.engine {
+	case "xray":
+		args = []string{"run", "-config", cfgPath}
+	case "mihomo":
+		args = []string{"-d", probeDir, "-f", cfgPath}
+	default:
+		args = []string{"run", "-c", cfgPath}
+	}
 	// #nosec G204 -- the operator-configured executable and generated config path are never derived from requests.
 	cmd := exec.CommandContext(cctx, d.bin, args...)
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	logFile, logErr := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if logErr == nil {
+		defer logFile.Close()
+		cmd.Stderr = logFile
+	} else {
+		cmd.Stderr = io.Discard
+	}
 	if err := cmd.Start(); err != nil {
-		res.Error = "start sing-box: " + err.Error()
+		res.Error = "start " + d.engine + ": " + err.Error()
 		return
 	}
 	defer func() {
@@ -302,15 +368,6 @@ func (d *Dialer) testOne(ctx context.Context, n *model.Node) {
 	res.ThroughputBPS = measurement.ThroughputBPS
 	if err != nil {
 		res.Error = err.Error()
-		// attach last log lines if any
-		// #nosec G304 -- logPath is generated inside the private per-probe work directory.
-		if b, e := os.ReadFile(logPath); e == nil && len(b) > 0 {
-			msg := string(b)
-			if len(msg) > 200 {
-				msg = msg[len(msg)-200:]
-			}
-			res.Error = res.Error + " | " + strings.TrimSpace(msg)
-		}
 		return
 	}
 	res.StatusCode = measurement.StatusCode
@@ -322,33 +379,57 @@ func (d *Dialer) testOne(ctx context.Context, n *model.Node) {
 	res.Error = fmt.Sprintf("http %d", measurement.StatusCode)
 }
 
-func (d *Dialer) coreConfig(n *model.Node, port int, logPath string) (map[string]any, []string, error) {
+func (d *Dialer) coreConfig(n *model.Node, port int, logPath string) ([]byte, error) {
+	if d.engine == "mihomo" {
+		proxyConfig, err := exporter.BuildClashProxy(n, "nodeharvest-proxy")
+		if err != nil {
+			return nil, err
+		}
+		return yaml.Marshal(map[string]any{
+			"mixed-port":    port,
+			"allow-lan":     false,
+			"mode":          "rule",
+			"log-level":     "error",
+			"ipv6":          true,
+			"unified-delay": true,
+			"proxies":       []any{proxyConfig},
+			"proxy-groups": []any{map[string]any{
+				"name": "nodeharvest-probe", "type": "select", "proxies": []string{"nodeharvest-proxy"},
+			}},
+			"rules": []string{"MATCH,nodeharvest-probe"},
+		})
+	}
+	var config map[string]any
 	if d.engine == "xray" {
 		outbound, err := BuildXrayOutbound(n)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		return map[string]any{
+		config = map[string]any{
 			"log": map[string]any{"loglevel": "warning", "error": logPath},
 			"inbounds": []any{map[string]any{
 				"listen": "127.0.0.1", "port": port, "protocol": "socks",
 				"settings": map[string]any{"auth": "noauth", "udp": true},
 			}},
 			"outbounds": []any{outbound},
-		}, []string{"run", "-config"}, nil
+		}
+		raw, err := json.Marshal(config)
+		return raw, err
 	}
 	outbound, err := BuildOutbound(n)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return map[string]any{
+	config = map[string]any{
 		"log": map[string]any{"level": "error", "output": logPath},
 		"inbounds": []any{map[string]any{
 			"type": "socks", "tag": "socks-in", "listen": "127.0.0.1", "listen_port": port,
 		}},
 		"outbounds": []any{outbound, map[string]any{"type": "direct", "tag": "direct"}},
 		"route":     map[string]any{"final": "proxy"},
-	}, []string{"run", "-c"}, nil
+	}
+	raw, err := json.Marshal(config)
+	return raw, err
 }
 
 type httpMeasurement struct {
@@ -382,13 +463,31 @@ func measureHTTP(client *http.Client, req *http.Request, maxBytes int64) (httpMe
 	return measurement, err
 }
 
-func mergeTag(tags []string, add string) []string {
-	for _, t := range tags {
-		if t == add {
-			return tags
+func replaceTag(tags []string, remove, add string) []string {
+	out := tags[:0]
+	for _, tag := range tags {
+		if tag != remove && tag != add {
+			out = append(out, tag)
 		}
 	}
-	return append(tags, add)
+	return append(out, add)
+}
+
+func appendCoreError(result *model.DialResult, logPath string) {
+	if result == nil || result.OK || result.Error == "" {
+		return
+	}
+	// #nosec G304 -- logPath is generated inside the private per-probe work directory.
+	body, err := os.ReadFile(logPath)
+	if err != nil || len(body) == 0 {
+		return
+	}
+	if len(body) > 500 {
+		body = body[len(body)-500:]
+	}
+	if message := strings.TrimSpace(string(body)); message != "" && !strings.Contains(result.Error, message) {
+		result.Error += " | " + message
+	}
 }
 
 // Summary 统计
@@ -416,7 +515,7 @@ func Summary(nodes []*model.Node) string {
 
 // InstallHint 提示
 func InstallHint() string {
-	return "run deploy/install-singbox.sh (pinned version and SHA-256), or set dial.bin to a verified sing-box/xray binary"
+	return "use the bundled image, or set dial.bin/dial.mihomo_bin to verified sing-box, xray, or Mihomo binaries"
 }
 
 // ParseProxyURL unused helper
@@ -427,6 +526,11 @@ func ParseProxyURL(raw string) (*url.URL, error) {
 // Available 快速检测环境
 func Available() (bin, engine string, err error) {
 	return resolveBinary("", "auto")
+}
+
+// AvailableFor resolves the configured binary and engine.
+func AvailableFor(bin, engine string) (resolvedBin, resolvedEngine string, err error) {
+	return resolveBinary(bin, engine)
 }
 
 // MustPort free check helper for tests

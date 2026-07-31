@@ -38,14 +38,17 @@ type Config struct {
 	Logging       LoggingConfig       `yaml:"logging"`
 }
 
-// DialConfig 真实协议拨测（sing-box / xray）
+// DialConfig 真实协议拨测（sing-box / xray / Mihomo）
 type DialConfig struct {
 	Enabled     bool   `yaml:"enabled"`
 	Bin         string `yaml:"bin"`         // 空=自动查找
-	Engine      string `yaml:"engine"`      // auto|sing-box|xray
+	MihomoBin   string `yaml:"mihomo_bin"`  // both/mihomo 模式；空=自动查找
+	Engine      string `yaml:"engine"`      // auto|sing-box|xray|mihomo|both
 	Concurrency int    `yaml:"concurrency"` // 同时核心实例数
 	TimeoutSec  int    `yaml:"timeout_sec"`
 	TestURL     string `yaml:"test_url"`
+	// VerifiedTTLHours controls both re-testing and verified subscription freshness.
+	VerifiedTTLHours int `yaml:"verified_ttl_hours"`
 	// DownloadBytes is the maximum response payload read for throughput measurement.
 	DownloadBytes int64 `yaml:"download_bytes"`
 	// SamplePercent is used by automatic post-quality dial runs when no fixed maximum is set.
@@ -231,17 +234,18 @@ func Default() *Config {
 			RenameWithFlag:       true,
 		},
 		Dial: DialConfig{
-			Enabled:         true,
-			Engine:          "sing-box",
-			Concurrency:     4,
-			TimeoutSec:      18,
-			TestURL:         "https://www.cloudflare.com/cdn-cgi/trace",
-			DownloadBytes:   256 << 10,
-			SamplePercent:   10,
-			MaxNodes:        0, // 0=全部 HQ
-			BatchSize:       200,
-			AfterQuality:    false,
-			AfterQualityMax: 0, // 0=quality 后对全部 HQ 多轮真拨
+			Enabled:          true,
+			Engine:           "both",
+			Concurrency:      4,
+			TimeoutSec:       18,
+			TestURL:          "https://www.cloudflare.com/cdn-cgi/trace",
+			VerifiedTTLHours: 6,
+			DownloadBytes:    256 << 10,
+			SamplePercent:    0,
+			MaxNodes:         0, // 0=全部 HQ
+			BatchSize:        200,
+			AfterQuality:     false,
+			AfterQualityMax:  0, // 0=quality 后对全部 HQ 多轮真拨
 		},
 		Security: SecurityConfig{
 			AllowQueryToken: false,
@@ -358,6 +362,24 @@ func (c *Config) Validate() error {
 	}
 	if c.Dial.DownloadBytes < 1024 || c.Dial.DownloadBytes > 64<<20 {
 		return fmt.Errorf("dial.download_bytes must be between 1024 and 67108864")
+	}
+	switch c.Dial.Engine {
+	case "auto", "sing-box", "xray", "mihomo", "both":
+	default:
+		return fmt.Errorf("unsupported dial.engine %q", c.Dial.Engine)
+	}
+	if c.Dial.Concurrency < 1 || c.Dial.Concurrency > 64 {
+		return fmt.Errorf("dial.concurrency must be between 1 and 64")
+	}
+	if c.Dial.TimeoutSec < 5 || c.Dial.TimeoutSec > 300 {
+		return fmt.Errorf("dial.timeout_sec must be between 5 and 300")
+	}
+	if c.Dial.VerifiedTTLHours < 1 || c.Dial.VerifiedTTLHours > 168 {
+		return fmt.Errorf("dial.verified_ttl_hours must be between 1 and 168")
+	}
+	testURL, err := url.Parse(c.Dial.TestURL)
+	if err != nil || (testURL.Scheme != "http" && testURL.Scheme != "https") || testURL.Host == "" {
+		return fmt.Errorf("dial.test_url must be an HTTP(S) URL")
 	}
 	if c.Dial.SamplePercent < 0 || c.Dial.SamplePercent > 100 {
 		return fmt.Errorf("dial.sample_percent must be between 0 and 100")
@@ -552,16 +574,22 @@ func (c *Config) normalize() {
 	if c.Dial.TestURL == "" {
 		c.Dial.TestURL = "https://www.cloudflare.com/cdn-cgi/trace"
 	}
+	if c.Dial.VerifiedTTLHours <= 0 {
+		c.Dial.VerifiedTTLHours = 6
+	}
 	// MaxNodes / AfterQualityMax: 0 表示不限制（全部 HQ），不再强制改成正数
 	if c.Dial.BatchSize <= 0 {
 		c.Dial.BatchSize = 200
 	}
 	if c.Dial.Engine == "" {
-		c.Dial.Engine = "sing-box"
+		c.Dial.Engine = "both"
 	}
+	c.Dial.Engine = strings.ToLower(strings.TrimSpace(c.Dial.Engine))
 	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_SINGBOX")); v != "" {
 		c.Dial.Bin = v
-		c.Dial.Engine = "sing-box"
+	}
+	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_MIHOMO")); v != "" {
+		c.Dial.MihomoBin = v
 	}
 	// 环境变量可覆盖 token / public url（部署友好）
 	if v := strings.TrimSpace(os.Getenv("NODE_HARVEST_TOKEN")); v != "" {
