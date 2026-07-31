@@ -289,6 +289,7 @@ func (d *Dialer) testOne(ctx context.Context, n *model.Node) {
 	// #nosec G204 -- the operator-configured executable and generated config path are never derived from requests.
 	cmd := exec.CommandContext(cctx, d.bin, args...)
 	cmd.Stdout = io.Discard
+	// #nosec G304 -- logPath is fixed beneath the private directory returned by os.MkdirTemp above.
 	logFile, logErr := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if logErr == nil {
 		defer logFile.Close()
