@@ -111,7 +111,7 @@ func (m *Manager) ValidateSession(raw string) (*Principal, error) {
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("invalid session")
 	}
-	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	headerBytes, err := decodeRawBase64(parts[0])
 	if err != nil {
 		return nil, fmt.Errorf("invalid session")
 	}
@@ -119,11 +119,11 @@ func (m *Manager) ValidateSession(raw string) (*Principal, error) {
 	if json.Unmarshal(headerBytes, &header) != nil || header["alg"] != "HS256" || header["typ"] != "JWT" {
 		return nil, fmt.Errorf("invalid session algorithm")
 	}
-	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	signature, err := decodeRawBase64(parts[2])
 	if err != nil || !hmac.Equal(signature, sign(parts[0]+"."+parts[1], m.SessionSecret)) {
 		return nil, fmt.Errorf("invalid session signature")
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	payload, err := decodeRawBase64(parts[1])
 	if err != nil {
 		return nil, fmt.Errorf("invalid session")
 	}
@@ -193,6 +193,14 @@ func principalFromUser(user *db.User, kind string) *Principal {
 
 func rawBase64(data []byte) string {
 	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+func decodeRawBase64(value string) ([]byte, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || rawBase64(decoded) != value {
+		return nil, fmt.Errorf("invalid base64url")
+	}
+	return decoded, nil
 }
 
 func sign(message, secret string) []byte {

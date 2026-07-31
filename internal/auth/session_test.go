@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GALIAIS/NodeHarvest/internal/config"
 	"github.com/GALIAIS/NodeHarvest/internal/db"
@@ -54,6 +55,27 @@ func TestLocalSessionRBACAndTamperDetection(t *testing.T) {
 	fromRequest, err := manager.RequestPrincipal(req)
 	if err != nil || fromRequest.Role != RoleAdmin {
 		t.Fatalf("request principal=%+v err=%v", fromRequest, err)
+	}
+}
+
+func TestRejectsNonCanonicalSessionSignature(t *testing.T) {
+	manager := &Manager{SessionSecret: strings.Repeat("s", 32), SessionTTL: time.Hour}
+	session, err := manager.IssueSession(&Principal{
+		Subject: "user", Name: "user", Role: RoleAdmin, TenantID: "default", Authenticated: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(session, ".")
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := parts[2][len(parts[2])-1]
+	index := strings.IndexByte(alphabet, last)
+	if index < 0 || index%4 != 0 {
+		t.Fatalf("unexpected canonical signature suffix %q", last)
+	}
+	parts[2] = parts[2][:len(parts[2])-1] + string(alphabet[index+1])
+	if _, err := manager.ValidateSession(strings.Join(parts, ".")); err == nil {
+		t.Fatal("non-canonical signature encoding accepted")
 	}
 }
 
