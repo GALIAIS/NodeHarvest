@@ -1371,6 +1371,9 @@ func (s *Service) doDial(ctx context.Context, j *model.Job, p0, p1 float64) erro
 		j.Stats["verified_total"] = len(s.store.ListNodes(store.NodeFilter{
 			VerifiedOnly: true, DialTestedAfter: s.verifiedAfter(), DialEngine: s.verifiedEngine(), Limit: 20000,
 		}))
+		if cfg.Publish.PreRender {
+			s.RefreshPublishCache()
+		}
 		s.updateJob(j, model.JobRunning, p0+(p1-p0)*float64(doneTotal)/float64(total),
 			fmt.Sprintf("dial round %d/%d done ok=%d fail=%d", round, rounds, okN, failN))
 	}
